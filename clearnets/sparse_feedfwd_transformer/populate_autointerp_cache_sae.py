@@ -14,7 +14,7 @@ def load_artifacts(cfg, model_name, sae_dir, features_name):
     save_dir = f"raw_features/{cfg.dataset_repo}/{features_name}"
     os.makedirs(save_dir, exist_ok=True)
 
-    tokenizer = AutoTokenizer.from_pretrained("data/tinystories/restricted_tokenizer")
+    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories")
     ckpt_path = f'data/tinystories/{model_name}/checkpoints/last.ckpt'
     model = TinyStoriesModel.load_from_checkpoint(
         ckpt_path,

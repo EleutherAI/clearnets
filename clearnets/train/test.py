@@ -16,11 +16,8 @@ def generate_story(
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
     dense=False
 ):
-    # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained("data/tinystories/restricted_tokenizer")
-    tiny_stories_8m_config["vocab_size"] = tokenizer.vocab_size  
+    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories")
     
-    # Initialize model
     model = TinyStoriesModel.load_from_checkpoint(
         checkpoint_path,
         dense=dense, 

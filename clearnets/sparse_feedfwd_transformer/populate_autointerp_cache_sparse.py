@@ -108,7 +108,7 @@ def main(cfg: CacheConfig, args):
     save_dir = f"raw_features/{cfg.dataset_repo}/{features_name}"
     os.makedirs(save_dir, exist_ok=True)
     
-    tokenizer = AutoTokenizer.from_pretrained("data/tinystories/restricted_tokenizer")
+    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories")
 
     ckpt_pattern = f'data/tinystories/{args.model}/checkpoints/epoch={args.epoch}-step=*.ckpt'
     matching_ckpt = glob.glob(ckpt_pattern)[0]
@@ -161,6 +161,6 @@ if __name__ == "__main__":
     parser.add_argument("--epoch", type=int, default=6) 
     args = parser.parse_args()
     cfg = args.options
-    cfg.tokenizer_or_model_name = "data/tinystories/restricted_tokenizer"
+    cfg.tokenizer_or_model_name = "EleutherAI/gpt-neo-125M"
     
     main(cfg, args)

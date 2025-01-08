@@ -10,7 +10,7 @@ SAE alternative.
 
 train_tinystories_transformers is the entry point for the project. Use it to train GptNeoX-style transformers with either sparse or dense feedfowards. sparse_gptneox and sparse_gptneox_config are both modified from the GptNeoX implementation in HuggingFace transformers with a flag that enables training with sparse feedforwards.
 
-Train a comparison SAE on a dense feedfwd transformer using train_sae_cli.
+Train a comparison SAE or transcoder on a dense feedfwd transformer using train_sae_cli.
 
 Evaluate the disengtanglement using populate_autointerp_cache_sae, populate_autointerp_cache_sparse and autointerp_explain, all modified from a script provided by Gonçalo to run sae-auto-interp.
 

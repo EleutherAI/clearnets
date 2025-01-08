@@ -1,3 +1,5 @@
+import wandb
+import numpy as np
 from pathlib import Path
 from sae.config import SaeConfig, TrainConfig
 from sae.trainer import SaeTrainer
@@ -10,8 +12,7 @@ from clearnets.sparse_feedfwd_transformer.populate_autointerp_cache_sparse impor
 from clearnets.sparse_feedfwd_transformer.train_tinystories_transformers import TinyStoriesModel
 
 def get_mean_sae_fvu(name: str):
-    import wandb
-    import numpy as np
+    
     api = wandb.Api()
 
     runs = api.runs("eleutherai/sae", filters={"display_name": name})
@@ -63,7 +64,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    tokenizer = AutoTokenizer.from_pretrained("data/tinystories/restricted_tokenizer")
+    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories")
     pl_model = TinyStoriesModel.load_from_checkpoint(
         "data/tinystories/mlp=1024-dense-8m-max-e=200-esp=15-s=42/checkpoints/last.ckpt", 
         dense=True, 

@@ -1,12 +1,8 @@
-import os
 from argparse import ArgumentParser
 import torch
-from transformers import PreTrainedTokenizerFast
 from torch.utils.data import DataLoader
 from datasets import load_dataset, DatasetDict
 import pytorch_lightning as pl
-from typing import Optional
-from tokenizers import models
 import torchmetrics as tm
 from pathlib import Path
 
@@ -43,102 +39,6 @@ class ThresholdCheckpoint(Callback):
             if not checkpoint_path.exists():
                 trainer.save_checkpoint(str(checkpoint_path))
                 print(f"\nValidation loss {current_loss:.4f} hit threshold {self.threshold:.4f}. Saved checkpoint to {checkpoint_path}")
-
-
-def get_tinystories_tokenizer(
-    base_tokenizer_name: str,
-    max_vocab_size: int = 10_000,
-    save_path: Optional[str] = None,
-):
-    """
-    Restrict a GPT-NeoX tokenizer's vocabulary to the most common tokens in the TinyStories dataset while preserving
-    whitespace handling and token uniqueness.
-
-    The original tokenizer uses <|endoftext|> for every special token.
-    Ideally we'd handle this implicitly but it's currently hard-coded.
-
-    Args:
-        base_tokenizer: The GPT-NeoX tokenizer to restrict
-        dataset: HuggingFace dataset containing text data
-        max_vocab_size: Maximum number of tokens to keep
-        save_path: Optional path to save the modified tokenizer
-    """
-    from tokengrams import MemmapIndex, tokenize_hf_dataset
-    from copy import deepcopy
-
-    base_tokenizer = AutoTokenizer.from_pretrained(base_tokenizer_name)
-    base_tokenizer.pad_token = base_tokenizer.eos_token
-
-    original_vocab = base_tokenizer.get_vocab()
-    original_tokens = {v: k for k, v in original_vocab.items()}
-
-    # Count token frequencies
-    if not os.path.exists("tinystories.bin"):
-        print("Tokenizing dataset...")
-        tokenize_hf_dataset(
-            dataset=load_dataset("roneneldan/TinyStories", split="train"),
-            tokenizer=base_tokenizer,
-            output_path="tinystories.bin",
-            text_key="text",
-            append_eod=True,
-            workers=10,
-        )
-        index = MemmapIndex.build("tinystories.bin", "tinystories.idx")
-    else:
-        print("Loading index...")
-        index = MemmapIndex("tinystories.bin", "tinystories.idx")
-
-    print("Counting tokens...")
-    token_counts = index.count_next([])
-
-    # Get most common token IDs
-    most_common_token_ids = torch.topk(
-        torch.tensor(token_counts), k=max_vocab_size
-    ).indices.tolist()
-
-    # Create new vocabulary preserving original token strings
-    new_vocab = {}
-    current_id = 0
-
-    # First add special tokens
-    special_token = "<|endoftext|>"
-    new_vocab[special_token] = current_id
-    current_id += 1
-
-    for token_id in most_common_token_ids:
-        if token_id < len(original_tokens):
-            token_string = original_tokens[token_id]
-            if token_string not in new_vocab and token_string != special_token:
-                new_vocab[token_string] = current_id
-                current_id += 1
-
-    # Create tokenizer with new vocab and backend mimicking the original
-    tokenizer_backend = deepcopy(base_tokenizer.backend_tokenizer)
-    tokenizer_config = tokenizer_backend.model # type: ignore
-    tokenizer_backend.model = models.BPE( # type: ignore
-        vocab=new_vocab,
-        merges=[],
-        dropout=tokenizer_config.dropout,
-        unk_token=base_tokenizer.unk_token,
-        continuing_subword_prefix=tokenizer_config.continuing_subword_prefix,
-        end_of_word_suffix=tokenizer_config.end_of_word_suffix,
-        fuse_unk=tokenizer_config.fuse_unk,
-    )
-    new_tokenizer = PreTrainedTokenizerFast(
-        tokenizer_object=tokenizer_backend,
-        bos_token="<|endoftext|>",
-        eos_token="<|endoftext|>",
-        unk_token="<|endoftext|>",
-        pad_token="<|endoftext|>",
-        add_prefix_space=False,
-        trim_offsets=True,  # Changed to True to better handle whitespace
-    )
-
-    if save_path:
-        new_tokenizer.save_pretrained(save_path)
-
-    return new_tokenizer
-
 
 tiny_stories_8m_config = {
     "_name_or_path": "//amlta41566503acb2986203fbd2fc58f9ff6/projects/CODE_YUANZHI/amlt-results/7318563093.69241-46ef7114-0cc8-4d54-8d19-c1863a28eb04/trainer_textbook/checkpoint-25750/",
@@ -177,18 +77,17 @@ tiny_stories_8m_config = {
     "torch_dtype": "bfloat16",  # "float32",
     "transformers_version": "4.28.1",
     "use_cache": True,
-    "vocab_size": 10_000,  # 50257,
+    "vocab_size": 50257,
     "window_size": 256,
 }
 
  
 def get_dataloaders(tokenizer, batch_size, num_workers=16):
-    # Load both splits at once
     dataset: DatasetDict = load_dataset("roneneldan/TinyStories") # type: ignore
 
     def preprocess(examples):
         tokenized = tokenizer(
-            examples["text"],  # Note: changed from input_ids to text since that's the actual column name
+            examples["text"],
             truncation=True,
             # max_length from TinyStories paper https://arxiv.org/pdf/2305.07759
             max_length=512,
@@ -197,9 +96,9 @@ def get_dataloaders(tokenizer, batch_size, num_workers=16):
         )
         return tokenized
 
-    # Process both splits
-    processed_datasets = {
-        split: (
+    dataloaders = {}
+    for split in ["train", "validation"]:
+        processed_dataset = (
             dataset[split]
             .map(
                 preprocess,
@@ -207,26 +106,15 @@ def get_dataloaders(tokenizer, batch_size, num_workers=16):
                 cache_file_name=f"data/tinystories/{split}_dataset.cache",
             )
         )
-        for split in ["train", "validation"]
-    }
-    for split in ["train", "validation"]:
-        processed_datasets[split].set_format(type="torch", columns=["input_ids", "attention_mask"])
-
-    # Create dataloaders
-    return (
-        DataLoader(
-            processed_datasets["train"], # type: ignore
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=num_workers,
-        ),
-        DataLoader(
-            processed_datasets["validation"], # type: ignore
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-        ),
-    )
+        processed_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
+        dataloaders[split] = DataLoader(
+            processed_dataset, # type: ignore
+            batch_size=batch_size, 
+            shuffle=split == "train", 
+            num_workers=num_workers
+        )
+    
+    return dataloaders["train"], dataloaders["validation"]
 
 
 class TinyStoriesModel(pl.LightningModule):
@@ -420,7 +308,6 @@ def parse_args():
 
 def main():
     args = parse_args()
-    size = "8"
 
     if args.dense:
         sparse_batch_size_scalar = 1
@@ -429,16 +316,8 @@ def main():
 
     batch_size = 80 // sparse_batch_size_scalar
     gradient_accumulation_steps = 16 * sparse_batch_size_scalar
-
-    # Get tokenizer restricted to 10k most common tokens
-    tokenizer_path = Path("data/tinystories/restricted_tokenizer")
-    if not tokenizer_path.exists():
-        get_tinystories_tokenizer(
-            "EleutherAI/gpt-neo-2.7B",
-            max_vocab_size=10_000,
-            save_path=str(tokenizer_path),
-        )
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+    
+    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories")
 
     ptl_model = TinyStoriesModel(args.dense, tokenizer, args.lr, betas=(args.b1, 0.95))
     ptl_model.cuda()
@@ -446,7 +325,7 @@ def main():
     train_loader, val_loader = get_dataloaders(tokenizer, batch_size)
 
     name = f"{args.tag + ' ' if args.tag else ''}{'dense' if args.dense else 'sparse'} \
-{size}m max e={args.max_epochs} esp={args.early_stopping_patience} s={SEED}"
+8m max e={args.max_epochs} esp={args.early_stopping_patience} s={SEED}"
     
     wandb_logger = WandbLogger(project="tinystories", name=name) if not args.debug else None
 

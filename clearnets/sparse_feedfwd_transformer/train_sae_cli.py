@@ -64,7 +64,7 @@ class RunConfig(TrainConfig):
 
 
 def load_tinystories_artifacts(args, rank: int) -> tuple[PreTrainedModel, Dataset | MemmapDataset, dict[str, Tensor] | None]:
-    tokenizer = AutoTokenizer.from_pretrained("data/tinystories/restricted_tokenizer")
+    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories")
     pl_model = TinyStoriesModel.load_from_checkpoint(
         checkpoint_path=args.ckpt,
         dense=True, 
