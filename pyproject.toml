@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clearnets"
+description = "Experimental disentanglement interpretability"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["interpretability", "explainable-ai"]
+license = {text = "MIT License"}
+dependencies = [
+    "sae @ https://github.com/EleutherAI/sae",
+    "sae_auto_interp @ https://github.com/EleutherAI/sae-auto-interp",
+    "datasets",
+    "torch",
+    "plotly",
+    "scipy",
+    "transformers",
+    "optimum",
+    "pre-commit",
+]
+version = "0.0.1"
+
+[tool.setuptools]
+packages = ["clearnets"]
+
+[tool.pyright]
+include = ["clearnets*"]
+reportPrivateImportUsage = false
+
+[tool.ruff]
+select = ["E", "F", "I"]
+line-length = 88
+ignore-init-module-imports = true
