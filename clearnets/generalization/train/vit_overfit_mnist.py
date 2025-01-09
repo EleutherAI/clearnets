@@ -15,7 +15,7 @@ from sae import SaeConfig, SaeTrainer, TrainConfig
 from tqdm import tqdm
 import lovely_tensors as lt
 
-from clearnets.utils.utils import set_seeds, assert_type
+from clearnets.utils import set_seeds, assert_type
 
 
 # Forgot to save this in pth

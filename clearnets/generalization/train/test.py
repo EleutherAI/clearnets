@@ -2,10 +2,7 @@ import os
 import torch
 from transformers import AutoTokenizer
 
-from clearnets.sparse_feedfwd_transformer.train_tinystories_transformers import (
-    tiny_stories_8m_config,
-    TinyStoriesModel
-)
+from clearnets.sparse_feedfwd_transformer.train_tinystories_transformers import TinyStoriesModel
 
 def generate_story(
     checkpoint_path: str,

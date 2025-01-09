@@ -25,9 +25,9 @@ from sae.trainer import SaeTrainer
 # from sae import SaeConfig, SaeTrainer, TrainConfig
 from nnsight import NNsight
 
-from clearnets.utils.utils import set_seeds
+from clearnets.utils import set_seeds
 from clearnets.train.lightning_wrapper import ScheduleFreeLightningWrapper
-from clearnets.metrics import network_compression, singular_values
+from clearnets.generalization.metrics import network_compression, singular_values
 
 
 torch.set_float32_matmul_precision('high')

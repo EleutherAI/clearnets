@@ -11,7 +11,7 @@ import tqdm.auto as tqdm
 import plotly.express as px
 import plotly.express as px
 import plotly.io as pio
-from clearnets.transformers import CustomTransformer, TransformerConfig
+from clearnets.generalization.transformers import CustomTransformer, TransformerConfig
 import torch.nn.functional as F
 import lovely_tensors as lt
 

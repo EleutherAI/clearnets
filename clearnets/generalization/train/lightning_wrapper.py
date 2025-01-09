@@ -5,7 +5,7 @@ import pytorch_lightning as pl
 from schedulefree import AdamWScheduleFree
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-from clearnets.utils.utils import assert_type
+from clearnets.utils import assert_type
 
 class LogSpacedCheckpoint(ModelCheckpoint):
     """
