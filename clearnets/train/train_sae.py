@@ -8,8 +8,8 @@ from transformers import AutoTokenizer
 from datasets import load_dataset
 from sae.data import chunk_and_tokenize
 
-from clearnets.sparse_feedfwd_transformer.populate_autointerp_cache_sparse import get_gptneo_hookpoints
-from clearnets.sparse_feedfwd_transformer.train_tinystories_transformers import TinyStoriesModel
+from clearnets.autointerp.populate_feature_cache_sparse import get_gptneo_hookpoints
+from clearnets.train.train_tinystories_transformers import TinyStoriesModel
 
 def get_mean_sae_fvu(name: str):
     
@@ -63,10 +63,10 @@ def parse_args():
 
 def main():
     args = parse_args()
-
-    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories")
+    dataset_str = "roneneldan/TinyStories"
+    tokenizer = AutoTokenizer.from_pretrained(dataset_str)
     pl_model = TinyStoriesModel.load_from_checkpoint(
-        "data/tinystories/mlp=1024-dense-8m-max-e=200-esp=15-s=42/checkpoints/last.ckpt", 
+        f"data/{dataset_str.replace('/', '--')}/Dense-TinyStories8M-s=42/checkpoints/last.ckpt", 
         dense=True, 
         tokenizer=tokenizer,
         map_location="cuda"

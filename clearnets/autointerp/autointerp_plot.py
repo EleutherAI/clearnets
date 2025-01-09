@@ -57,9 +57,9 @@ def build_df(path: Path):
 
     for type in ["sparse", "SAE", "Transcoder"]:
         if type == "sparse":
-            dir_path = path / f"sparse-8m-max-e=200-esp=15-s=42" / "default"
+            dir_path = path / f"Sparse-TinyStories8M-s=42" / "default"
         else:
-            dir_path = path / f"mlp=1024-dense-8m-max-e=200-esp=15-s=42" / type.lower()
+            dir_path = path / f"Dense-TinyStories8M-s=42" / type.lower()
 
         for score_type in ["fuzz", "detection"]:
             for score_file in (dir_path / score_type).glob("*.txt"):

@@ -11,7 +11,7 @@ from sae_auto_interp.features import FeatureCache
 from sae_auto_interp.utils import load_tokenized_data
 from typing import Any, Tuple, Dict
 
-from clearnets.sparse_feedfwd_transformer.train_tinystories_transformers import TinyStoriesModel
+from clearnets.train.train_tinystories_transformers import TinyStoriesModel
 from clearnets.generalization.inference.inference import to_dense
 
 
@@ -104,13 +104,15 @@ def get_gptneo_hookpoints(model):
 
 @torch.inference_mode()
 def main(cfg: CacheConfig, args): 
+    dataset_str = "roneneldan/TinyStories"
+
     features_name = f"{args.model}-{args.epoch}"
     save_dir = f"raw_features/{cfg.dataset_repo}/{features_name}"
     os.makedirs(save_dir, exist_ok=True)
     
-    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories")
+    tokenizer = AutoTokenizer.from_pretrained(dataset_str)
 
-    ckpt_pattern = f'data/tinystories/{args.model}/checkpoints/epoch={args.epoch}-step=*.ckpt'
+    ckpt_pattern = f"data/{dataset_str.replace('/', '--')}/{args.model}/checkpoints/epoch={args.epoch}-step=*.ckpt"
     matching_ckpt = glob.glob(ckpt_pattern)[0]
     model = TinyStoriesModel.load_from_checkpoint(
         matching_ckpt,
@@ -118,6 +120,7 @@ def main(cfg: CacheConfig, args):
         tokenizer=tokenizer
     ).model
     model.to(device='cuda') # type: ignore
+
     # I believe dispatch won't work for tinystories models
     model = NNsight(model, device_map="auto", torch_dtype=torch.bfloat16, tokenizer=tokenizer) # dispatch=False
     model.tokenizer = tokenizer
@@ -161,6 +164,5 @@ if __name__ == "__main__":
     parser.add_argument("--epoch", type=int, default=6) 
     args = parser.parse_args()
     cfg = args.options
-    cfg.tokenizer_or_model_name = "EleutherAI/gpt-neo-125M"
     
     main(cfg, args)

@@ -219,3 +219,6 @@ prototype.py
 *.pickle
 *.csv
 *.pkl
+
+# PyTorch Lightning
+lightning_logs/
