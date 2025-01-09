@@ -11,7 +11,7 @@ from sae_auto_interp.features import FeatureCache
 from sae_auto_interp.utils import load_tokenized_data
 from typing import Any, Tuple, Dict
 
-from clearnets.sparse_feedfwd_transformer.train_tinystories_transformers import TinyStoriesModel
+from clearnets.train.train_tinystories_transformers import TinyStoriesModel
 from clearnets.generalization.inference.inference import to_dense
 
 
@@ -118,6 +118,7 @@ def main(cfg: CacheConfig, args):
         tokenizer=tokenizer
     ).model
     model.to(device='cuda') # type: ignore
+
     # I believe dispatch won't work for tinystories models
     model = NNsight(model, device_map="auto", torch_dtype=torch.bfloat16, tokenizer=tokenizer) # dispatch=False
     model.tokenizer = tokenizer
@@ -161,6 +162,5 @@ if __name__ == "__main__":
     parser.add_argument("--epoch", type=int, default=6) 
     args = parser.parse_args()
     cfg = args.options
-    cfg.tokenizer_or_model_name = "EleutherAI/gpt-neo-125M"
     
     main(cfg, args)

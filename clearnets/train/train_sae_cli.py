@@ -13,7 +13,7 @@ from transformers import AutoModel, BitsAndBytesConfig, PreTrainedModel, AutoPro
 from sae.data import chunk_and_tokenize, MemmapDataset
 from sae.trainer import SaeTrainer, TrainConfig
 
-from clearnets.sparse_feedfwd_transformer.train_tinystories_transformers import TinyStoriesModel
+from clearnets.train.train_tinystories_transformers import TinyStoriesModel
 
 
 @dataclass
@@ -61,26 +61,6 @@ class RunConfig(TrainConfig):
         default_factory=lambda: cpu_count() // 2,
     )
     """Number of processes to use for preprocessing data"""
-
-
-def load_tinystories_artifacts(args, rank: int) -> tuple[PreTrainedModel, Dataset | MemmapDataset, dict[str, Tensor] | None]:
-    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories")
-    pl_model = TinyStoriesModel.load_from_checkpoint(
-        checkpoint_path=args.ckpt,
-        dense=True, 
-        tokenizer=tokenizer,
-        map_location=f"cuda:{rank}"
-    )
-    model = pl_model.model
-
-    dataset = load_dataset("roneneldan/TinyStories", split="train")
-    # max_length from TinyStories paper https://arxiv.org/pdf/2305.07759
-    dataset = chunk_and_tokenize(dataset, tokenizer, max_seq_len=512) # type: ignore
-    dataset.set_format(type="torch", columns=["input_ids"])
-
-    dummy_inputs = {'input_ids': dataset[0]['input_ids'].unsqueeze(0)} 
-
-    return model, dataset, dummy_inputs
 
 
 def load_artifacts(args: RunConfig, rank: int) -> tuple[PreTrainedModel, Dataset | MemmapDataset, dict[str, Tensor] | None]:
@@ -142,8 +122,15 @@ def load_artifacts(args: RunConfig, rank: int) -> tuple[PreTrainedModel, Dataset
     return model, dataset, dummy_inputs
 
 
-
 def run():
+    args = parse(RunConfig)
+    args.model = "roneneldan/TinyStories-8M"
+    args.dataset = "roneneldan/TinyStories"
+    args.ckpt = "data/tinystories/Dense-TinyStories8M-s=42/checkpoints/last.ckpt" # type: ignore
+    args.ctx_len = 512
+
+    # Modified from the original script in sae to load a local model
+
     local_rank = os.environ.get("LOCAL_RANK")
     ddp = local_rank is not None
     rank = int(local_rank) if ddp else 0
@@ -155,19 +142,33 @@ def run():
         if rank == 0:
             print(f"Using DDP across {dist.get_world_size()} GPUs.")
 
-
-    args = parse(RunConfig)
-    args.model = "SparseMLPTransformer"
-    args.dataset = "RestrictedTinyStories"
-    args.ckpt = "data/tinystories/mlp=1024-dense-8m-max-e=200-esp=15-s=42/checkpoints/last.ckpt" # type: ignore
-
     # Awkward hack to prevent other ranks from duplicating data preprocessing
     if not ddp or rank == 0:
-        model, dataset, dummy_inputs = load_tinystories_artifacts(args, rank)
+        model, dataset, dummy_inputs = load_artifacts(args, rank)
+        
+        # Override pretrained model with one from checkpoint
+        tokenizer = AutoTokenizer.from_pretrained(args.dataset)
+        model = TinyStoriesModel.load_from_checkpoint(
+            checkpoint_path=args.ckpt,
+            dense=True, 
+            tokenizer=tokenizer,
+            map_location=f"cuda:{rank}"
+        ).model
+
     if ddp:
         dist.barrier()
         if rank != 0:
-            model, dataset, dummy_inputs = load_tinystories_artifacts(args, rank)
+            model, dataset, dummy_inputs = load_artifacts(args, rank)
+
+            # Override pretrained model with one from checkpoint
+            tokenizer = AutoTokenizer.from_pretrained(args.dataset)
+            model = TinyStoriesModel.load_from_checkpoint(
+                checkpoint_path=args.ckpt,
+                dense=True, 
+                tokenizer=tokenizer,
+                map_location=f"cuda:{rank}"
+            ).model
+
         dataset = dataset.shard(dist.get_world_size(), rank)
 
     # Prevent ranks other than 0 from printing

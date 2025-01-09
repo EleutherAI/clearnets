@@ -12,10 +12,8 @@ from pytorch_lightning.loggers import WandbLogger
 from transformers import AutoTokenizer
 import lovely_tensors as lt
 
-from clearnets.sparse_feedfwd_transformer.sparse_gptneox import (
-    SparseGPTNeoConfig,
-    SparseGPTNeoForCausalLM,
-)
+from clearnets.train.sparse_gptneox import SparseGPTNeoForCausalLM
+from clearnets.train.sparse_gptneox_config import SparseGPTNeoConfig
 from clearnets.utils import set_seeds
 
 lt.monkey_patch()
@@ -314,6 +312,7 @@ def main():
     else:
         sparse_batch_size_scalar = 2
 
+    # Effective batch size = 80 * 16 = 1280
     batch_size = 80 // sparse_batch_size_scalar
     gradient_accumulation_steps = 16 * sparse_batch_size_scalar
     
@@ -324,8 +323,7 @@ def main():
 
     train_loader, val_loader = get_dataloaders(tokenizer, batch_size)
 
-    name = f"{args.tag + ' ' if args.tag else ''}{'dense' if args.dense else 'sparse'} \
-8m max e={args.max_epochs} esp={args.early_stopping_patience} s={SEED}"
+    name = f"{'Dense' if args.dense else 'Sparse'} 8M s={SEED} {args.tag + ' ' if args.tag else ''}"
     
     wandb_logger = WandbLogger(project="tinystories", name=name) if not args.debug else None
 
@@ -354,7 +352,7 @@ def main():
         ],
         logger=wandb_logger if not args.debug else None,
         gradient_clip_val=1.0,
-        accumulate_grad_batches=gradient_accumulation_steps,  # Effective batch size = 80 * 16 = 1280
+        accumulate_grad_batches=gradient_accumulation_steps,
     )
 
     trainer.fit(ptl_model, train_loader, val_loader)

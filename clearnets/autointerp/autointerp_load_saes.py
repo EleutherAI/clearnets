@@ -6,8 +6,6 @@ from sae.sae import Sae
 from sae_auto_interp.autoencoders.OpenAI.model import ACTIVATIONS_CLASSES, TopK
 from sae_auto_interp.autoencoders.wrapper import AutoencoderLatents
 
-DEVICE = "cuda:0"
-
 
 def load_eai_autoencoders(
     model: Any,
@@ -16,7 +14,8 @@ def load_eai_autoencoders(
     module: str,
     randomize: bool = False,
     seed: int = 42,
-    k: Optional[int] = None
+    k: Optional[int] = None,
+    device="cuda:0"
 ) -> Tuple[Dict[str, Any], Any]:
     """
     Load EleutherAI autoencoders for specified layers and module.
@@ -43,13 +42,13 @@ def load_eai_autoencoders(
             submodule = f"layers.{layer}"
         
         if "mnt" in weight_dir:
-            sae = Sae.load_from_disk(weight_dir+"/"+submodule, device=DEVICE).to(dtype=model.dtype)
+            sae = Sae.load_from_disk(weight_dir+"/"+submodule, device=device).to(dtype=model.dtype)
         else:
-            sae = Sae.load_from_hub(weight_dir,hookpoint=submodule, device=DEVICE).to(dtype=model.dtype)
+            sae = Sae.load_from_hub(weight_dir,hookpoint=submodule, device=device).to(dtype=model.dtype)
         
         if randomize:
-            sae = Sae.load_from_hub(weight_dir,hookpoint=submodule, device=DEVICE).to(dtype=model.dtype)
-            sae = Sae(sae.d_in, sae.cfg, device=DEVICE, dtype=model.dtype, decoder=False)
+            sae = Sae.load_from_hub(weight_dir,hookpoint=submodule, device=device).to(dtype=model.dtype)
+            sae = Sae(sae.d_in, sae.cfg, device=device, dtype=model.dtype, decoder=False)
             # Randomize the weights
             sae.encoder.weight.data.normal_(-1,1)
             sae.encoder.weight.data = sae.encoder.weight.data / torch.norm(sae.encoder.weight.data, dim=0, keepdim=True)
