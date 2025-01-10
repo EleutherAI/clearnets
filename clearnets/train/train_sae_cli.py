@@ -16,8 +16,11 @@ from sae.trainer import SaeTrainer, TrainConfig
 from clearnets.train.train_tinystories_transformers import TinyStoriesModel
 
 
+# Modified from the sae __main__ - added ckpt to enable a local custom model 
 @dataclass
 class RunConfig(TrainConfig):
+    ckpt: str = "data/roneneldan--TinyStories/Dense-TinyStories8M-w=2k-s=42/checkpoints/last.ckpt"
+    
     model: str = field(
         default="EleutherAI/pythia-160m",
         positional=True,
@@ -122,14 +125,9 @@ def load_artifacts(args: RunConfig, rank: int) -> tuple[PreTrainedModel, Dataset
     return model, dataset, dummy_inputs
 
 
+# Modified from the sae __main__ to use a local custom model
 def run():
     args = parse(RunConfig)
-    args.model = "roneneldan/TinyStories-8M"
-    args.dataset = "roneneldan/TinyStories"
-    args.ckpt = f"data/{args.dataset.replace('/', '--')}/Dense-TinyStories8M-s=42/checkpoints/last.ckpt" # type: ignore
-    args.ctx_len = 512
-
-    # Modified from the original script in sae to load a local model
 
     local_rank = os.environ.get("LOCAL_RANK")
     ddp = local_rank is not None

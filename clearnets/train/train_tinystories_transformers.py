@@ -305,7 +305,7 @@ def parse_args():
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--max_epochs", type=int, default=200)
     parser.add_argument("--early_stopping_patience", type=int, default=15)
-    parser.add_argument("--lr", type=float, default=5e-4)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--b1", type=float, default=0.9)
     parser.add_argument("--tag", type=str, default="")
     return parser.parse_args()
@@ -319,7 +319,7 @@ def main():
     if (Path("data") / name.replace(" ", "-")).exists():
         name += " " + datetime.datetime.now().strftime("%y-%m-%d")
     # Checkpoints directory name
-    dir_path = Path("data") / name.replace(" ", "-") / "checkpoints"
+    dir_path = Path("data") / args.dataset.replace('/', '--') / name.replace(" ", "-") / "checkpoints"
 
     if args.dense:
         sparse_batch_size_scalar = 1
@@ -353,7 +353,7 @@ def main():
         precision="bf16-mixed",
         accelerator="auto",
         max_epochs=args.max_epochs,
-        devices=[0, 1, 2, 3] if not args.debug else [0], # 1, 2, 3, 4, 5, 6, 7
+        devices=[0, 1, 2, 3, 4, 5, 6, 7] if not args.debug else [0],
         callbacks=[
             # threshold_callback,
             checkpoint_callback,

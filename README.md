@@ -12,13 +12,22 @@ Contains scripts for calling the sae-auto-interp code on trained models.
 
 ### Notes
 
-train_tinystories_transformers is the entry point for the project. Use it to train GptNeoX-style transformers with either sparse or dense feedfowards. sparse_gptneox and sparse_gptneox_config are both modified from the GptNeoX implementation in HuggingFace transformers with a flag that enables training with sparse feedforwards.
+Train GptNeoX-style base transformers with either sparse or dense feedforwards:
 
-Train a comparison SAE or transcoder on a dense feedfwd transformer using train_sae_cli.
+```
+python -m clearnets.train.train_tinystories_transformers
+python -m clearnets.train.train_tinystories_transformers --dense
+```
 
-Evaluate the disengtanglement using populate_autointerp_cache_sae, populate_autointerp_cache_sparse and autointerp_explain, all modified from a script provided by Gonçalo to run sae-auto-interp.
+sparse_gptneox and sparse_gptneox_config are both modified from the GptNeoX implementation in HuggingFace transformers with a flag that enables training with sparse feedforwards.
 
-Example:
+Train a comparison SAE or transcoder on a dense feedfwd transformer using:
+
+```
+python -m clearnets.train.train_sae_cli --dataset roneneldan/TinyStories --model roneneldan/TinyStories-8M --ctx_len 512 --ckpt "data/roneneldan--TinyStories/Dense-TinyStories8M-w=2k-s=42/checkpoints/last.ckpt"
+```
+
+Evaluate the disengtanglement using autointerp:
 
 ```
 python -m clearnets.autointerp.populate_cache_sae --dataset_repo "roneneldan/TinyStories" --dataset_split "train[:2%]" --dataset_row "text" --n_tokens 10_000_000
