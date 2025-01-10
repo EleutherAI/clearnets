@@ -15,8 +15,9 @@ Contains scripts for calling the sae-auto-interp code on trained models.
 Train GptNeoX-style base transformers with either sparse or dense feedforwards:
 
 ```
-python -m clearnets.train.train_tinystories_transformers
-python -m clearnets.train.train_tinystories_transformers --dense
+python -m clearnets.train.train_transformer
+python -m clearnets.train.train_transformer --dense
+python -m clearnets.train.train_transformer --dense --dataset "lennart-finke/SimpleStories" --tokenizer "EleutherAI/gpt-neo-125m"
 ```
 
 sparse_gptneox and sparse_gptneox_config are both modified from the GptNeoX implementation in HuggingFace transformers with a flag that enables training with sparse feedforwards.

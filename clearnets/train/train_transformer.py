@@ -94,6 +94,7 @@ def get_dataloaders(dataset_str: str, tokenizer, batch_size: int, ctx_len: int, 
             tokenizer,
             max_seq_len=ctx_len,
             num_proc=num_workers,
+            text_key="text" if "text" in dataset["train"].column_names else "story",
         )
         processed_dataset.save_to_disk(cache_file_name)
     else:
@@ -103,7 +104,7 @@ def get_dataloaders(dataset_str: str, tokenizer, batch_size: int, ctx_len: int, 
     processed_dataset.set_format(type="torch", columns=["input_ids"])
 
     dataloaders = {}
-    for split in ["train", "validation"]:
+    for split in processed_dataset.keys():
         dataloaders[split] = DataLoader(
             processed_dataset[split],
             batch_size=batch_size, 
@@ -111,7 +112,7 @@ def get_dataloaders(dataset_str: str, tokenizer, batch_size: int, ctx_len: int, 
             num_workers=num_workers
         )
     
-    return dataloaders["train"], dataloaders["validation"]
+    return dataloaders['train'], dataloaders['validation'] if 'validation' in dataloaders else dataloaders['test']
 
 
 class LightningWrapper(pl.LightningModule):
@@ -297,7 +298,8 @@ def parse_args():
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--dense", action="store_true")
     parser.add_argument("--dataset", type=str, default="roneneldan/TinyStories")
-    parser.add_argument("--model", type=str, default="roneneldan/TinyStories8M")
+    parser.add_argument("--tokenizer", type=str)
+    parser.add_argument("--config", type=str, default="roneneldan/TinyStories8M")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--max_epochs", type=int, default=200)
     parser.add_argument("--early_stopping_patience", type=int, default=15)
@@ -321,10 +323,9 @@ def main():
 
     # WandB run name
     name = f"{'Dense' if args.dense else 'Sparse'} TinyStories8M s={SEED}{' ' + args.tag if args.tag else ''}"
-    if (Path("data") / name.replace(" ", "-")).exists():
-        name += " " + datetime.datetime.now().strftime("%y-%m-%d")
-    # Checkpoints directory name
     dir_path = Path("data") / args.dataset.replace('/', '--') / name.replace(" ", "-") / "checkpoints"
+    if dir_path.exists():
+        dir_path = dir_path.parent / f"{dir_path.stem} {datetime.datetime.now().strftime('%y-%m-%d')}"
 
     if args.dense:
         sparse_batch_size_scalar = 1
@@ -336,16 +337,16 @@ def main():
     gradient_accumulation_steps = 16 * sparse_batch_size_scalar
     
     # max_position_embeddings=context_length
-    config = SparseGPTNeoConfig(**MODEL_CONFIG[args.model], sparse_mlp=not args.dense)
+    config = SparseGPTNeoConfig(**MODEL_CONFIG[args.config], sparse_mlp=not args.dense)
     model = SparseGPTNeoForCausalLM(config)
     
-    tokenizer = AutoTokenizer.from_pretrained(args.dataset)
-    
+    tokenizer = AutoTokenizer.from_pretrained(args.dataset if not args.tokenizer else args.tokenizer)
+
     ptl_model = LightningWrapper(model, tokenizer, args.lr, betas=(args.b1, 0.95))
     ptl_model.cuda()
     
-    train_loader, val_loader = get_dataloaders(
-        args.dataset, tokenizer, batch_size, MODEL_CONFIG[args.model]['ctx_len']
+    train_dataloader, val_dataloader  = get_dataloaders(
+        args.dataset, tokenizer, batch_size, MODEL_CONFIG[args.config]['ctx_len']
     )
     
     wandb_logger = WandbLogger(project="tinystories", name=name) if not args.debug else None
@@ -377,7 +378,7 @@ def main():
         accumulate_grad_batches=gradient_accumulation_steps,
     )
 
-    trainer.fit(ptl_model, train_loader, val_loader)
+    trainer.fit(ptl_model, train_dataloader, val_dataloader)
 
 
 if __name__ == "__main__":
