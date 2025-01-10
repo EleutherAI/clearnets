@@ -339,10 +339,11 @@ def main():
     config = SparseGPTNeoConfig(**MODEL_CONFIG[args.model], sparse_mlp=not args.dense)
     model = SparseGPTNeoForCausalLM(config)
     
+    tokenizer = AutoTokenizer.from_pretrained(args.dataset)
+    
     ptl_model = LightningWrapper(model, tokenizer, args.lr, betas=(args.b1, 0.95))
     ptl_model.cuda()
     
-    tokenizer = AutoTokenizer.from_pretrained(args.dataset)
     train_loader, val_loader = get_dataloaders(
         args.dataset, tokenizer, batch_size, MODEL_CONFIG[args.model]['ctx_len']
     )
