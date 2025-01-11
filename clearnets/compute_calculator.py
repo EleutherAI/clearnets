@@ -1,5 +1,6 @@
 from argparse import ArgumentParser
 
+
 def calculate_attention_flops(config, batch_size, seq_length):
     """Calculate FLOPs for attention layer."""
     hidden_size = config.hidden_size
@@ -135,11 +136,13 @@ def calculate_total_sae_training_flops(
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--batch_size", type=int, default=1280)
-    parser.add_argument("--sae_batch_size", type=int, default=8)
+    parser.add_argument("--sae_batch_size", type=int, default=1280)
     parser.add_argument("--seq_len", type=int, default=512)
     parser.add_argument("--num_steps", type=int, default=18_500, # Rough globals steps from WandB 
                         help='Number of training steps with gradient accumulation steps not included')
     return parser.parse_args()
+
+
 if __name__ == "__main__":   
     # The step count in wandb will match your actual optimization steps, not the individual 
     # forward/backward passes during gradient accumulation. 
@@ -181,4 +184,4 @@ if __name__ == "__main__":
     )
 
     sae_steps_in_budget = (sparse_flops - dense_flops) // sae_flop_per_step
-    print('sae_steps_in_budget', f'{sae_steps_in_budget:.2e}') # ~5 million
+    print('sae_steps_in_budget', f'{sae_steps_in_budget:.2e}') # ~5 million @ batch size of 8 or 31,400 @ batch size of 1280
