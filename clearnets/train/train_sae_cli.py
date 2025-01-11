@@ -13,7 +13,7 @@ from transformers import AutoModel, BitsAndBytesConfig, PreTrainedModel, AutoPro
 from sae.data import chunk_and_tokenize, MemmapDataset
 from sae.trainer import SaeTrainer, TrainConfig
 
-from clearnets.train.train_tinystories_transformers import TinyStoriesModel
+from clearnets.train.train_transformer import LightningWrapper
 
 
 # Modified from the sae __main__ - added ckpt to enable a local custom model 
@@ -146,7 +146,7 @@ def run():
         
         # Override pretrained model with one from checkpoint
         tokenizer = AutoTokenizer.from_pretrained(args.dataset)
-        model = TinyStoriesModel.load_from_checkpoint(
+        model = LightningWrapper.load_from_checkpoint(
             checkpoint_path=args.ckpt,
             dense=True, 
             tokenizer=tokenizer,
@@ -160,7 +160,7 @@ def run():
 
             # Override pretrained model with one from checkpoint
             tokenizer = AutoTokenizer.from_pretrained(args.dataset)
-            model = TinyStoriesModel.load_from_checkpoint(
+            model = LightningWrapper.load_from_checkpoint(
                 checkpoint_path=args.ckpt,
                 dense=True, 
                 tokenizer=tokenizer,

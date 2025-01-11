@@ -1,3 +1,5 @@
+from argparse import ArgumentParser
+
 def calculate_attention_flops(config, batch_size, seq_length):
     """Calculate FLOPs for attention layer."""
     hidden_size = config.hidden_size
@@ -68,7 +70,7 @@ def calculate_transformer_flops(config, batch_size, seq_length, is_sparse=False)
     total_flops = embedding_flops + layer_flops + final_ln_flops
     return total_flops
 
-def calculate_sae_forward_flops(config, sae_config, batch_size, seq_length, auxk_loss=True):
+def calculate_sae_forward_flops(config, sae_config, batch_size, seq_length, auxk_loss=False):
     """Calculate FLOPs for a single forward pass through the SAE."""
     d_in = config.hidden_size 
     num_latents = sae_config.num_latents or d_in * sae_config.expansion_factor
@@ -104,8 +106,6 @@ def calculate_total_sae_training_flops(
     sae_config,
     batch_size,
     seq_length,
-    num_training_steps,
-    grad_accumulation_steps=1
 ):
     """Calculate total FLOPs for SAE training process."""
     # FLOPs per forward pass through transformer to get activations
@@ -121,60 +121,64 @@ def calculate_total_sae_training_flops(
         transformer_config,
         sae_config, 
         batch_size, 
-        seq_length
+        seq_length,
+        auxk_loss=sae_config.multi_topk
     )
     
     # Approximate backward pass as 2x forward pass
     sae_backward_flops = 2 * sae_forward_flops
     
     # Total FLOPs per step including forward and backward
-    flops_per_step = transformer_flops + sae_forward_flops + sae_backward_flops
-    
-    # Scale by number of steps and gradient accumulation
-    total_flops = flops_per_step * num_training_steps * grad_accumulation_steps
-    
-    return total_flops
+    return transformer_flops + sae_forward_flops + sae_backward_flops
 
 
-if __name__ == "__main__":    
-    # max_position_embeddings=context_length
+def parse_args():
+    parser = ArgumentParser()
+    parser.add_argument("--batch_size", type=int, default=1280)
+    parser.add_argument("--sae_batch_size", type=int, default=8)
+    parser.add_argument("--seq_len", type=int, default=512)
+    parser.add_argument("--num_steps", type=int, default=18_500, # Rough globals steps from WandB 
+                        help='Number of training steps with gradient accumulation steps not included')
+    return parser.parse_args()
+if __name__ == "__main__":   
+    # The step count in wandb will match your actual optimization steps, not the individual 
+    # forward/backward passes during gradient accumulation. 
+    # This matches the standard convention of counting actual weight updates as steps.
+
+    args = parse_args()
+    print("Batch size:", args.batch_size)
+    print("Sequence length:", args.seq_len)
+    print("Number of training steps (gradient accumulation steps not included):", args.num_steps)
+
     from clearnets.train.sparse_gptneox_config import SparseGPTNeoConfig
     from clearnets.train.train_transformer import MODEL_CONFIG
     from sae.config import SaeConfig
 
-    # Effective batch size = 80 * 16 = 1280
-    sparse_batch_size_scalar = 2
-    batch_size = 80 // sparse_batch_size_scalar
-    gradient_accumulation_steps = 16 * sparse_batch_size_scalar
-
     sparse_config = SparseGPTNeoConfig(**MODEL_CONFIG["roneneldan/TinyStories8M"], sparse_mlp=True)
-    sparse_flops = calculate_transformer_flops(sparse_config, batch_size=1, seq_length=512, is_sparse=True)
-    print('sparse_flops per step, batch size of 1', f'{sparse_flops:.2e}')
-
-    # The step count in wandb will match your actual optimization steps, not the individual 
-    # forward/backward passes during gradient accumulation. 
-    # This matches the standard convention of counting actual weight updates as steps.
-    sparse_batch_size_scalar = 1
-    batch_size = 80 // sparse_batch_size_scalar
-    gradient_accumulation_steps = 16 * sparse_batch_size_scalar
+    sparse_flops_per_step = calculate_transformer_flops(sparse_config, batch_size=args.batch_size, seq_length=args.seq_len, is_sparse=True)
+    sparse_flops = sparse_flops_per_step * args.num_steps
+    print('sparse_flops', f'{sparse_flops:.2e}')
 
     dense_config = SparseGPTNeoConfig(**MODEL_CONFIG["roneneldan/TinyStories8M"], sparse_mlp=False)
-    dense_flops = calculate_transformer_flops(dense_config, batch_size=1, seq_length=512, is_sparse=False)
-    print('dense_flops per step, batch size of 1', f'{dense_flops:.2e}')
+    dense_flops_per_step = calculate_transformer_flops(dense_config, batch_size=args.batch_size, seq_length=args.seq_len, is_sparse=False)
+    dense_flops = dense_flops_per_step * args.num_steps
+    
+    print('dense_flops', f'{dense_flops:.2e}')
+    # ~1 : 3.2 in favor of sparse FLOPs
+
+    print('Leftover FLOP for training SAE on dense transformer', f'{(sparse_flops - dense_flops):.2e}')
 
     sae_config = SaeConfig(
+        expansion_factor=8,
         k=32,
-        expansion_factor=4,
-        normalize_decoder=True
+        multi_topk=True   
     )
-    total_sae_flops = calculate_total_sae_training_flops(
+    sae_flop_per_step = calculate_total_sae_training_flops(
         dense_config,
         sae_config,
-        batch_size=1,
-        seq_length=512,
-        num_training_steps=1
+        batch_size=args.sae_batch_size,
+        seq_length=args.seq_len,
     )
-    print('total_sae_flops per step, batch size of 1', f'{total_sae_flops:.2e}')
 
-
-    # ~1 : 3.2 in favor of sparse FLOPs
+    sae_steps_in_budget = (sparse_flops - dense_flops) // sae_flop_per_step
+    print('sae_steps_in_budget', f'{sae_steps_in_budget:.2e}') # ~5 million
