@@ -5,9 +5,12 @@ from simple_parsing import ArgumentParser
 import torch
 from sae_auto_interp.config import CacheConfig
 from transformers import AutoTokenizer
-from clearnets.train.train_tinystories_transformers import TinyStoriesModel
+
 from clearnets.autointerp.autointerp_load_saes import load_eai_autoencoders
 from clearnets.autointerp.populate_feature_cache_sparse import save_features
+from clearnets.train.sparse_gptneox import SparseGPTNeoForCausalLM
+from clearnets.train.sparse_gptneox_config import SparseGPTNeoConfig
+from clearnets.train.train_transformer import LightningWrapper, MODEL_CONFIG
 
 
 def load_artifacts(cfg, ckpt_path: str, dataset: str, sae_dir, features_name):
@@ -15,8 +18,9 @@ def load_artifacts(cfg, ckpt_path: str, dataset: str, sae_dir, features_name):
     os.makedirs(save_dir, exist_ok=True)
 
     tokenizer = AutoTokenizer.from_pretrained(dataset)
-    model = TinyStoriesModel.load_from_checkpoint(
+    model = LightningWrapper.load_from_checkpoint(
         ckpt_path,
+        model=SparseGPTNeoForCausalLM(SparseGPTNeoConfig(**MODEL_CONFIG["roneneldan/TinyStories-8M"], sparse_mlp=False)),
         dense=True,
         tokenizer=tokenizer
     ).model
