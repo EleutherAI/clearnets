@@ -63,10 +63,10 @@ def parse_args():
 
 def main():
     args = parse_args()
-
-    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories")
+    dataset_str = "roneneldan/TinyStories"
+    tokenizer = AutoTokenizer.from_pretrained(dataset_str)
     pl_model = TinyStoriesModel.load_from_checkpoint(
-        "data/tinystories/Dense-TinyStories8M-s=42/checkpoints/last.ckpt", 
+        f"data/{dataset_str.replace('/', '--')}/Dense-TinyStories8M-s=42/checkpoints/last.ckpt", 
         dense=True, 
         tokenizer=tokenizer,
         map_location="cuda"

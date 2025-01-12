@@ -104,13 +104,15 @@ def get_gptneo_hookpoints(model):
 
 @torch.inference_mode()
 def main(cfg: CacheConfig, args): 
+    dataset_str = "roneneldan/TinyStories"
+
     features_name = f"{args.model}-{args.epoch}"
     save_dir = f"raw_features/{cfg.dataset_repo}/{features_name}"
     os.makedirs(save_dir, exist_ok=True)
     
-    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories")
+    tokenizer = AutoTokenizer.from_pretrained(dataset_str)
 
-    ckpt_pattern = f'data/tinystories/{args.model}/checkpoints/epoch={args.epoch}-step=*.ckpt'
+    ckpt_pattern = f"data/{dataset_str.replace('/', '--')}/{args.model}/checkpoints/epoch={args.epoch}-step=*.ckpt"
     matching_ckpt = glob.glob(ckpt_pattern)[0]
     model = TinyStoriesModel.load_from_checkpoint(
         matching_ckpt,

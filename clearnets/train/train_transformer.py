@@ -1,20 +1,22 @@
 from argparse import ArgumentParser
+from pathlib import Path
+import datetime
+
 import torch
 from torch.utils.data import DataLoader
-from datasets import load_dataset, DatasetDict
+from datasets import load_dataset, DatasetDict, load_from_disk
 import pytorch_lightning as pl
 import torchmetrics as tm
-from pathlib import Path
-
 from schedulefree import AdamWScheduleFree
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, Callback
 from pytorch_lightning.loggers import WandbLogger
 from transformers import AutoTokenizer
 import lovely_tensors as lt
+from sae.data import chunk_and_tokenize
 
 from clearnets.train.sparse_gptneox import SparseGPTNeoForCausalLM
 from clearnets.train.sparse_gptneox_config import SparseGPTNeoConfig
-from clearnets.utils import set_seeds
+from clearnets.utils import set_seeds, assert_type
 
 lt.monkey_patch()
 torch.set_float32_matmul_precision("high")
@@ -80,43 +82,41 @@ tiny_stories_8m_config = {
 }
 
  
-def get_dataloaders(tokenizer, batch_size, num_workers=16):
-    dataset: DatasetDict = load_dataset("roneneldan/TinyStories") # type: ignore
+def get_dataloaders(dataset_str: str, tokenizer, batch_size: int, ctx_len: int, num_workers=16):
+    dataset: DatasetDict = load_dataset(dataset_str) # type: ignore
 
-    def preprocess(examples):
-        tokenized = tokenizer(
-            examples["text"],
-            truncation=True,
-            # max_length from TinyStories paper https://arxiv.org/pdf/2305.07759
-            max_length=512,
-            padding="max_length",
-            return_tensors="pt",
+    cache_file_name=Path(f"data/{dataset_str.replace('/', '--')}/dataset.cache")
+    cache_file_name.parent.mkdir(parents=True, exist_ok=True)
+
+    if not cache_file_name.exists():
+        processed_dataset = chunk_and_tokenize(
+            dataset,
+            tokenizer,
+            max_seq_len=ctx_len,
+            num_proc=num_workers,
+            text_key="text" if "text" in dataset["train"].column_names else "story",
         )
-        return tokenized
+        processed_dataset.save_to_disk(cache_file_name)
+    else:
+        processed_dataset = load_from_disk(cache_file_name)
+    
+    processed_dataset = assert_type(DatasetDict, processed_dataset)
+    processed_dataset.set_format(type="torch", columns=["input_ids"])
 
     dataloaders = {}
-    for split in ["train", "validation"]:
-        processed_dataset = (
-            dataset[split]
-            .map(
-                preprocess,
-                batched=True,
-                cache_file_name=f"data/tinystories/{split}_dataset.cache",
-            )
-        )
-        processed_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
+    for split in processed_dataset.keys():
         dataloaders[split] = DataLoader(
-            processed_dataset, # type: ignore
+            processed_dataset[split],
             batch_size=batch_size, 
             shuffle=split == "train", 
             num_workers=num_workers
         )
     
-    return dataloaders["train"], dataloaders["validation"]
+    return dataloaders['train'], dataloaders['validation'] if 'validation' in dataloaders else dataloaders['test']
 
 
-class TinyStoriesModel(pl.LightningModule):
-    def __init__(self, dense: bool, tokenizer, lr: float = 5e-4, betas: tuple = (0.9, 0.95)):
+class LightningWrapper(pl.LightningModule):
+    def __init__(self, model, tokenizer, lr: float = 5e-4, betas: tuple = (0.9, 0.95)):
         super().__init__()
         # From https://huggingface.co/roneneldan/TinyStories-33M
         # lr_scheduler = "constant"
@@ -124,11 +124,7 @@ class TinyStoriesModel(pl.LightningModule):
         self.weight_decay = 0.1
         self.betas = betas
         self.tokenizer = tokenizer
-
-        self.config = SparseGPTNeoConfig(
-            **tiny_stories_8m_config, sparse_mlp=not dense
-        )  # max_position_embeddings=context_length
-        self.model = SparseGPTNeoForCausalLM(self.config)
+        self.model = model
 
         self.train_acc = tm.Accuracy(
             "multiclass", num_classes=tiny_stories_8m_config["vocab_size"]
@@ -137,9 +133,10 @@ class TinyStoriesModel(pl.LightningModule):
             "multiclass", num_classes=tiny_stories_8m_config["vocab_size"]
         )
 
-    def forward(self, input_ids, attention_mask):
+    def forward(self, input_ids):
+        # attention_mask=attention_mask, 
         return self.model(
-            input_ids=input_ids, attention_mask=attention_mask, labels=input_ids
+            input_ids=input_ids, labels=input_ids
         )
 
     def training_step(self, batch, batch_idx):
@@ -164,7 +161,12 @@ class TinyStoriesModel(pl.LightningModule):
             batch_size=batch["input_ids"].shape[0],
             logger=True,
         )
-        self.train_acc(batch["input_ids"], batch["attention_mask"])
+
+        logits = outputs.logits[:, :-1, :]
+        self.train_acc(
+            logits.reshape(-1, logits.size(-1)), 
+            batch["input_ids"][:, 1:].reshape(-1)
+        )
         self.log(
             "train_acc",
             self.train_acc,
@@ -211,7 +213,7 @@ class TinyStoriesModel(pl.LightningModule):
             # sample_output = self.model.generate(sample_input, max_new_tokens=99)
             sample_output = self.model.generate(
                 sample_input,
-                attention_mask=torch.ones_like(sample_input),
+                # attention_mask=torch.ones_like(sample_input),
                 max_new_tokens=99,
             )
             sample_str = self.tokenizer.decode(
@@ -295,17 +297,35 @@ def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--dense", action="store_true")
+    parser.add_argument("--dataset", type=str, default="roneneldan/TinyStories")
+    parser.add_argument("--tokenizer", type=str)
+    parser.add_argument("--config", type=str, default="roneneldan/TinyStories-8M")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--max_epochs", type=int, default=200)
     parser.add_argument("--early_stopping_patience", type=int, default=15)
-    parser.add_argument("--lr", type=float, default=5e-4)
+    parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--b1", type=float, default=0.9)
     parser.add_argument("--tag", type=str, default="")
     return parser.parse_args()
 
 
+MODEL_CONFIG = {
+    'roneneldan/TinyStories-8M': {
+        # https://huggingface.co/roneneldan/TinyStories-8M/blob/main/config.json
+        **tiny_stories_8m_config,
+        # max_length from TinyStories paper https://arxiv.org/pdf/2305.07759
+        'ctx_len': 512
+    }
+}
+
 def main():
     args = parse_args()
+
+    # WandB run name
+    name = f"{'Dense' if args.dense else 'Sparse'} TinyStories8M s={SEED}{' ' + args.tag if args.tag else ''}"
+    dir_path = Path("data") / args.dataset.replace('/', '--') / name.replace(" ", "-") / "checkpoints"
+    if dir_path.exists():
+        dir_path = dir_path.parent / f"{dir_path.stem} {datetime.datetime.now().strftime('%y-%m-%d')}"
 
     if args.dense:
         sparse_batch_size_scalar = 1
@@ -316,18 +336,23 @@ def main():
     batch_size = 80 // sparse_batch_size_scalar
     gradient_accumulation_steps = 16 * sparse_batch_size_scalar
     
-    tokenizer = AutoTokenizer.from_pretrained("roneneldan/TinyStories")
+    # max_position_embeddings=context_length
+    config = SparseGPTNeoConfig(**MODEL_CONFIG[args.config], sparse_mlp=not args.dense)
+    model = SparseGPTNeoForCausalLM(config)
+    
+    tokenizer = AutoTokenizer.from_pretrained(args.dataset if not args.tokenizer else args.tokenizer)
 
-    ptl_model = TinyStoriesModel(args.dense, tokenizer, args.lr, betas=(args.b1, 0.95))
+    ptl_model = LightningWrapper(model, tokenizer, args.lr, betas=(args.b1, 0.95))
     ptl_model.cuda()
-
-    train_loader, val_loader = get_dataloaders(tokenizer, batch_size)
 
     name = f"{'Dense' if args.dense else 'Sparse'} 8M s={SEED} {args.tag + ' ' if args.tag else ''}"
     
+    train_dataloader, val_dataloader  = get_dataloaders(
+        args.dataset, tokenizer, batch_size, MODEL_CONFIG[args.config]['ctx_len']
+    )
+    
     wandb_logger = WandbLogger(project="tinystories", name=name) if not args.debug else None
 
-    dir_path = Path("data/tinystories") / name.replace(" ", "-") / "checkpoints"
     checkpoint_callback = ModelCheckpoint(
         dirpath=dir_path,
         save_top_k=-1,
@@ -342,7 +367,7 @@ def main():
         precision="bf16-mixed",
         accelerator="auto",
         max_epochs=args.max_epochs,
-        devices=[0, 1, 2, 3] if not args.debug else [0], # 1, 2, 3, 4, 5, 6, 7
+        devices=[0, 1, 2, 3, 4, 5, 6, 7] if not args.debug else [0],
         callbacks=[
             # threshold_callback,
             checkpoint_callback,
@@ -355,7 +380,7 @@ def main():
         accumulate_grad_batches=gradient_accumulation_steps,
     )
 
-    trainer.fit(ptl_model, train_loader, val_loader)
+    trainer.fit(ptl_model, train_dataloader, val_dataloader)
 
 
 if __name__ == "__main__":

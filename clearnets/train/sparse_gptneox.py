@@ -51,7 +51,7 @@ from transformers.utils import (
     
 )
 # from transformers.models.gpt_neo.configuration_gpt_neo import GPTNeoConfig
-from clearnets.sparse_feedfwd_transformer.sparse_gptneox_config import SparseGPTNeoConfig
+from clearnets.train.sparse_gptneox_config import SparseGPTNeoConfig
 from transformers.models.gpt_neo.modeling_gpt_neo import (
     GPTNeoSelfAttention, 
     GPTNeoFlashAttention2, 

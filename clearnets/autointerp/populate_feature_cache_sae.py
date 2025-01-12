@@ -42,7 +42,7 @@ def parse_args():
     parser = ArgumentParser()
     parser.add_arguments(CacheConfig, dest="options")
     parser.add_argument("--out", type=str, default="Transcoder-8M")
-    parser.add_argument("--model_ckpt", type=str, default="data/tinystories/Dense-TinyStories8m-s=42/checkpoints/last.ckpt")
+    parser.add_argument("--model_ckpt", type=str, default="data/roneneldan--TinyStories/Dense-TinyStories8m-s=42/checkpoints/last.ckpt")
     parser.add_argument("--dataset", type=str, default="roneneldan/TinyStories")
     parser.add_argument("--sae_dir", type=str, default="/mnt/ssd-1/lucia/clearnets/data/sae/Dense TinyStories8M Transcoder 32x 8192 s=42 epoch 21")
     return parser.parse_args()

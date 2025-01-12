@@ -2,7 +2,7 @@ import os
 import torch
 from transformers import AutoTokenizer
 
-from clearnets.sparse_feedfwd_transformer.train_tinystories_transformers import TinyStoriesModel
+from clearnets.train.train_tinystories_transformers import TinyStoriesModel
 
 def generate_story(
     checkpoint_path: str,
@@ -55,9 +55,12 @@ def generate_story(
     return stories
 
 if __name__ == "__main__":
+    dataset_str = "roneneldan/TinyStories"
+    dataset_filename = dataset_str.replace("/", "--")
+    
     # Find the latest checkpoint
-    # checkpoint_dir = "data/tinystories-8/checkpoints"
-    checkpoint_dir = "data/tinystories/dense-8m-max-e=200-esp=15-s=42/checkpoints"
+    # checkpoint_dir = f"data/{dataset_filename}/checkpoints"
+    checkpoint_dir = f"data/{dataset_filename}/dense-8m-max-e=200-esp=15-s=42/checkpoints"
     checkpoints = [f for f in os.listdir(checkpoint_dir) if f.endswith('.ckpt')]
     latest_checkpoint = max([os.path.join(checkpoint_dir, ckpt) for ckpt in checkpoints], key=os.path.getmtime)
     
