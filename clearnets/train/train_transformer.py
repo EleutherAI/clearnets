@@ -299,7 +299,7 @@ def parse_args():
     parser.add_argument("--dense", action="store_true")
     parser.add_argument("--dataset", type=str, default="roneneldan/TinyStories")
     parser.add_argument("--tokenizer", type=str)
-    parser.add_argument("--config", type=str, default="roneneldan/TinyStories8M")
+    parser.add_argument("--config", type=str, default="roneneldan/TinyStories-8M")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--max_epochs", type=int, default=200)
     parser.add_argument("--early_stopping_patience", type=int, default=15)
@@ -310,7 +310,7 @@ def parse_args():
 
 
 MODEL_CONFIG = {
-    'roneneldan/TinyStories8M': {
+    'roneneldan/TinyStories-8M': {
         # https://huggingface.co/roneneldan/TinyStories-8M/blob/main/config.json
         **tiny_stories_8m_config,
         # max_length from TinyStories paper https://arxiv.org/pdf/2305.07759

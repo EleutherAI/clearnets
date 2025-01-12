@@ -20,7 +20,7 @@ python -m clearnets.train.train_transformer --dense --dataset "lennart-finke/Sim
 Train a comparison SAE or transcoder on a dense feedforward transformer using:
 
 ```
-python -m clearnets.train.train_sae_cli --dataset roneneldan/TinyStories --model roneneldan/TinyStories-8M --ctx_len 512 --ckpt "data/roneneldan--TinyStories/Dense-TinyStories8M-w=2k-s=42/checkpoints/last.ckpt" --transcode
+python -m clearnets.train.train_sae_cli --run_name Transcoder-roneneldan--TinyStories-8M --ckpt "data/roneneldan--TinyStories/Dense-TinyStories8M-s=42-full-vocab/checkpoints/last.ckpt" --hookpoints transformer.h.*.mlp --ctx_len 512 --batch_size 128 --grad_acc_steps 2 --max_examples 768_000 --transcode
 ```
 
 ## Autointerp

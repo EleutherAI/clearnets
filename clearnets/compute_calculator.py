@@ -157,12 +157,12 @@ if __name__ == "__main__":
     from clearnets.train.train_transformer import MODEL_CONFIG
     from sae.config import SaeConfig
 
-    sparse_config = SparseGPTNeoConfig(**MODEL_CONFIG["roneneldan/TinyStories8M"], sparse_mlp=True)
+    sparse_config = SparseGPTNeoConfig(**MODEL_CONFIG["roneneldan/TinyStories-8M"], sparse_mlp=True)
     sparse_flops_per_step = calculate_transformer_flops(sparse_config, batch_size=args.batch_size, seq_length=args.seq_len, is_sparse=True)
     sparse_flops = sparse_flops_per_step * args.num_steps
     print('sparse_flops', f'{sparse_flops:.2e}')
 
-    dense_config = SparseGPTNeoConfig(**MODEL_CONFIG["roneneldan/TinyStories8M"], sparse_mlp=False)
+    dense_config = SparseGPTNeoConfig(**MODEL_CONFIG["roneneldan/TinyStories-8M"], sparse_mlp=False)
     dense_flops_per_step = calculate_transformer_flops(dense_config, batch_size=args.batch_size, seq_length=args.seq_len, is_sparse=False)
     dense_flops = dense_flops_per_step * args.num_steps
     
@@ -182,6 +182,18 @@ if __name__ == "__main__":
         batch_size=args.sae_batch_size,
         seq_length=args.seq_len,
     )
+    print(sae_flop_per_step)
 
-    sae_steps_in_budget = (sparse_flops - dense_flops) // sae_flop_per_step
-    print('sae_steps_in_budget', f'{sae_steps_in_budget:.2e}') # ~5 million @ batch size of 8 or 31,400 @ batch size of 1280
+    flop_budget = (sparse_flops - dense_flops)
+    # ~5 million @ batch size of 8
+    # 78,500 @ batch size of 512
+    # 31,400 @ batch size of 1280
+    sae_steps_in_budget = flop_budget // sae_flop_per_step
+    sae_sequences_per_step = args.sae_batch_size
+
+    # We have far more steps in our budget than we need (referring to previous runs: https://wandb.ai/eleutherai/sae?nw=nwuserluciarosequirke&panelDisplayName=fvu%2Ftransformer.h.1.mlp)
+    # So we can simply run to convergence which seems to take around 6k steps
+    sae_max_sequences = sae_steps_in_budget * sae_sequences_per_step
+    print('sae_max_sequences', f'{sae_max_sequences:.2e}') 
+
+    print('SAE sequences in 6k steps', sae_sequences_per_step * 6_000)

@@ -3,6 +3,7 @@ from contextlib import nullcontext, redirect_stdout
 from dataclasses import dataclass
 from multiprocessing import cpu_count
 from safetensors.torch import load_model
+from itertools import chain
 
 import torch
 from torch import Tensor
@@ -13,22 +14,25 @@ from transformers import AutoModel, BitsAndBytesConfig, PreTrainedModel, AutoPro
 from sae.data import chunk_and_tokenize, MemmapDataset
 from sae.trainer import SaeTrainer, TrainConfig
 
-from clearnets.train.train_transformer import LightningWrapper
+from clearnets.train.train_transformer import LightningWrapper, MODEL_CONFIG
+from clearnets.train.sparse_gptneox import SparseGPTNeoForCausalLM
+from clearnets.train.sparse_gptneox_config import SparseGPTNeoConfig
+
 
 
 # Modified from the sae __main__ - added ckpt to enable a local custom model 
 @dataclass
 class RunConfig(TrainConfig):
-    ckpt: str = "data/roneneldan--TinyStories/Dense-TinyStories8M-w=2k-s=42/checkpoints/last.ckpt"
+    ckpt: str = "data/roneneldan--TinyStories/Dense-TinyStories8M-s=42-full-vocab/checkpoints/last.ckpt"
     
     model: str = field(
-        default="EleutherAI/pythia-160m",
+        default="roneneldan/TinyStories-8M",
         positional=True,
     )
     """Name of the model to train."""
 
     dataset: str = field(
-        default="togethercomputer/RedPajama-Data-1T-Sample",
+        default="roneneldan/TinyStories",
         positional=True,
     )
     """Path to the dataset to use for training."""
@@ -36,7 +40,7 @@ class RunConfig(TrainConfig):
     split: str = "train"
     """Dataset split to use for training."""
 
-    ctx_len: int = 2048
+    ctx_len: int = 512
     """Context length to use for training."""
 
     hf_token: str | None = None
@@ -66,7 +70,7 @@ class RunConfig(TrainConfig):
     """Number of processes to use for preprocessing data"""
 
 
-def load_artifacts(args: RunConfig, rank: int) -> tuple[PreTrainedModel, Dataset | MemmapDataset, dict[str, Tensor] | None]:
+def load_artifacts(args: RunConfig, rank: int) -> tuple[PreTrainedModel, Dataset | MemmapDataset]:
     if args.load_in_8bit:
         dtype = torch.float16
     elif torch.cuda.is_bf16_supported():
@@ -86,7 +90,6 @@ def load_artifacts(args: RunConfig, rank: int) -> tuple[PreTrainedModel, Dataset
         torch_dtype=dtype,
         token=args.hf_token,
     )
-    dummy_inputs = None
 
     # For memmap-style datasets
     if args.dataset.endswith(".bin"):
@@ -116,13 +119,12 @@ def load_artifacts(args: RunConfig, rank: int) -> tuple[PreTrainedModel, Dataset
         dataset = dataset.shuffle(args.seed)
 
         dataset = dataset.with_format("torch", dtype=dtype if target_column == "pixel_values" else None)
+        dataset = dataset.select(list(chain(*[range(len(dataset))] * 100)))
 
         if limit := args.max_examples:
             dataset = dataset.select(range(limit))
 
-        dummy_inputs = {target_column: dataset[0][target_column].unsqueeze(0)} 
-
-    return model, dataset, dummy_inputs
+    return model, dataset
 
 
 # Modified from the sae __main__ to use a local custom model
@@ -142,12 +144,13 @@ def run():
 
     # Awkward hack to prevent other ranks from duplicating data preprocessing
     if not ddp or rank == 0:
-        model, dataset, dummy_inputs = load_artifacts(args, rank)
+        model, dataset = load_artifacts(args, rank)
         
         # Override pretrained model with one from checkpoint
         tokenizer = AutoTokenizer.from_pretrained(args.dataset)
         model = LightningWrapper.load_from_checkpoint(
             checkpoint_path=args.ckpt,
+            model=SparseGPTNeoForCausalLM(SparseGPTNeoConfig(**MODEL_CONFIG["roneneldan/TinyStories-8M"], sparse_mlp=False)),
             dense=True, 
             tokenizer=tokenizer,
             map_location=f"cuda:{rank}"
@@ -156,12 +159,13 @@ def run():
     if ddp:
         dist.barrier()
         if rank != 0:
-            model, dataset, dummy_inputs = load_artifacts(args, rank)
+            model, dataset = load_artifacts(args, rank)
 
             # Override pretrained model with one from checkpoint
             tokenizer = AutoTokenizer.from_pretrained(args.dataset)
             model = LightningWrapper.load_from_checkpoint(
                 checkpoint_path=args.ckpt,
+                model=SparseGPTNeoForCausalLM(SparseGPTNeoConfig(**MODEL_CONFIG["roneneldan/TinyStories-8M"], sparse_mlp=False)),
                 dense=True, 
                 tokenizer=tokenizer,
                 map_location=f"cuda:{rank}"
@@ -174,7 +178,7 @@ def run():
         print(f"Training on '{args.dataset}' (split '{args.split}')")
         print(f"Storing model weights in {model.dtype}")
 
-        trainer = SaeTrainer(args, dataset, model, dummy_inputs)
+        trainer = SaeTrainer(args, dataset, model)
         if args.resume:
             trainer.load_state(args.run_name or "sae-ckpts")
         elif args.finetune:
