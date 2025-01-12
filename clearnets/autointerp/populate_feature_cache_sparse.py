@@ -11,9 +11,10 @@ from sae_auto_interp.features import FeatureCache
 from sae_auto_interp.utils import load_tokenized_data
 from typing import Any, Tuple, Dict
 
-from clearnets.train.train_tinystories_transformers import TinyStoriesModel
 from clearnets.generalization.inference.inference import to_dense
-
+from clearnets.train.sparse_gptneox import SparseGPTNeoForCausalLM
+from clearnets.train.sparse_gptneox_config import SparseGPTNeoConfig
+from clearnets.train.train_transformer import LightningWrapper, MODEL_CONFIG
 
 def load_dense_mlp_transformer_saes(model):
     pass
@@ -114,8 +115,9 @@ def main(cfg: CacheConfig, args):
 
     ckpt_pattern = f"data/{dataset_str.replace('/', '--')}/{args.model}/checkpoints/epoch={args.epoch}-step=*.ckpt"
     matching_ckpt = glob.glob(ckpt_pattern)[0]
-    model = TinyStoriesModel.load_from_checkpoint(
+    model = LightningWrapper.load_from_checkpoint(
         matching_ckpt,
+        model=SparseGPTNeoForCausalLM(SparseGPTNeoConfig(**MODEL_CONFIG["roneneldan/TinyStories-8M"], sparse_mlp=True)),
         dense=False,
         tokenizer=tokenizer
     ).model
