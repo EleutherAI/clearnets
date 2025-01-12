@@ -29,7 +29,7 @@ def load_artifacts(cfg, ckpt_path: str, dataset: str, sae_dir, features_name):
     nnsight_model = NNsight(model, device_map="auto", torch_dtype=torch.bfloat16, tokenizer=tokenizer)
     nnsight_model.tokenizer = tokenizer
 
-    # Hacked in two places:
+    # Modified from the original helper function in sae-auto-interp to be compatible with TinyStories hookpoint naming:
     # submodule = f"transformer.h.{layer}.mlp"
     # submodule = model.transformer.h[layer].mlp
     submodule_dict, nnsight_model = load_eai_autoencoders(

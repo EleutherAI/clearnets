@@ -103,21 +103,20 @@ def get_gptneo_hookpoints(model):
         hookpoints.append(f"transformer.h.{i}.mlp")
     return hookpoints
 
+
 @torch.inference_mode()
 def main(cfg: CacheConfig, args): 
-    dataset_str = "roneneldan/TinyStories"
-
     features_name = f"{args.model}-{args.epoch}"
     save_dir = f"raw_features/{cfg.dataset_repo}/{features_name}"
     os.makedirs(save_dir, exist_ok=True)
     
-    tokenizer = AutoTokenizer.from_pretrained(dataset_str)
+    tokenizer = AutoTokenizer.from_pretrained(args.dataset)
 
-    ckpt_pattern = f"data/{dataset_str.replace('/', '--')}/{args.model}/checkpoints/epoch={args.epoch}-step=*.ckpt"
+    ckpt_pattern = f"data/{args.dataset.replace('/', '--')}/{args.model}/checkpoints/epoch={args.epoch}-step=*.ckpt"
     matching_ckpt = glob.glob(ckpt_pattern)[0]
     model = LightningWrapper.load_from_checkpoint(
         matching_ckpt,
-        model=SparseGPTNeoForCausalLM(SparseGPTNeoConfig(**MODEL_CONFIG["roneneldan/TinyStories-8M"], sparse_mlp=True)),
+        model=SparseGPTNeoForCausalLM(SparseGPTNeoConfig(**MODEL_CONFIG[args.model_cfg], sparse_mlp=True)),
         dense=False,
         tokenizer=tokenizer
     ).model
@@ -162,8 +161,10 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_arguments(CacheConfig, dest="options")
     parser.add_argument("--model", type=str, default="sparse-8m-max-e=200-esp=15-s=42")
+    parser.add_argument("--model_cfg", type=str, default="roneneldan/TinyStories-8M")
     # epoch=6-step=1456.ckpt has matched val loss with dense-8m-max-e=200-esp=15-s=42 epoch=21-step=1456.ckpt
     parser.add_argument("--epoch", type=int, default=6) 
+    parser.add_argument("--dataset", type=str, default="roneneldan/TinyStories") 
     args = parser.parse_args()
     cfg = args.options
     
