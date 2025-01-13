@@ -58,7 +58,7 @@ def build_df(path: Path):
     latent_type = []
     feature_idx = []
 
-    for type in ["SAE-8M", "Transcoder-8M"]: # "sparse", 
+    for type in ["SAE-8M", "Transcoder-8M", "Sparse-8M-last"]:
         if type == "sparse":
             dir_path = path / f"Sparse-TinyStories8M-s=42-full-vocab" / "default"
         else:

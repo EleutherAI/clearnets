@@ -120,13 +120,13 @@ def get_gptneo_hookpoints(model):
 
 @torch.inference_mode()
 def main(cfg: CacheConfig, args): 
-    features_name = f"{args.tag}-{args.epoch}"
+    features_name = f"{args.tag}-{args.epoch if args.epoch else 'last'}"
     save_dir = f"raw_features/{cfg.dataset_repo}/{features_name}"
     os.makedirs(save_dir, exist_ok=True)
     
     tokenizer = AutoTokenizer.from_pretrained(args.dataset)
 
-    ckpt_pattern = f"data/{args.dataset.replace('/', '--')}/{args.base_model}/checkpoints/last.ckpt" # epoch={args.epoch}-step=*.ckpt"
+    ckpt_pattern = f"data/{args.dataset.replace('/', '--')}/{args.model_ckpt}/checkpoints/{'last' if not args.epoch else f'epoch={args.epoch}-step=*'}.ckpt"
     matching_ckpt = glob.glob(ckpt_pattern)[0]
     model = LightningWrapper.load_from_checkpoint(
         matching_ckpt,
@@ -175,11 +175,12 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_arguments(CacheConfig, dest="options")
     parser.add_argument("--tokenizer_model", type=str, default="roneneldan/TinyStories-8M")
-    parser.add_argument("--base_model", type=str, default="Sparse-TinyStories8M-s=42-full-vocab")
-    parser.add_argument("--tag", type=str, default="SAE-8M")
+    parser.add_argument("--model_ckpt", type=str, default="Sparse-TinyStories8M-s=42-full-vocab")
     parser.add_argument("--model_cfg", type=str, default="roneneldan/TinyStories-8M")
+    parser.add_argument("--tag", type=str, default="Sparse-8M")
+    
     # epoch=6-step=1456.ckpt has matched val loss with dense-8m-max-e=200-esp=15-s=42 epoch=21-step=1456.ckpt
-    # parser.add_argument("--epoch", type=int, default=6) 
+    parser.add_argument("--epoch", type=int) 
     parser.add_argument("--dataset", type=str, default="roneneldan/TinyStories") 
     args = parser.parse_args()
     cfg = args.options
