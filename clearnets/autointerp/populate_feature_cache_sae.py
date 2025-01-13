@@ -45,7 +45,9 @@ def load_artifacts(cfg, ckpt_path: str, dataset: str, sae_dir, features_name):
 def parse_args():
     parser = ArgumentParser()
     parser.add_arguments(CacheConfig, dest="options")
-    parser.add_argument("--out", type=str, default="Transcoder-8M")
+    parser.add_argument("--tag", type=str, help="Tag for naming the cache directory")
+    parser.add_argument("--tokenizer_model", type=str, default="roneneldan/TinyStories-8M", help="Model class to load the tokenizer for")
+    parser.add_argument("--model_cfg", type=str, default="roneneldan/TinyStories-8M", help="Tag to load a custom config")
     parser.add_argument("--model_ckpt", type=str, default="data/roneneldan--TinyStories/Dense-TinyStories8m-s=42/checkpoints/last.ckpt")
     parser.add_argument("--dataset", type=str, default="roneneldan/TinyStories")
     parser.add_argument("--sae_dir", type=str, default="/mnt/ssd-1/lucia/clearnets/data/sae/Dense TinyStories8M Transcoder 32x 8192 s=42 epoch 21")
@@ -56,9 +58,9 @@ def main():
     args = parse_args()
     cfg = args.options
 
-    model, save_dir, submodule_dict = load_artifacts(cfg, args.model_ckpt, args.dataset, args.sae_dir, args.out)
+    model, save_dir, submodule_dict = load_artifacts(cfg, args.model_ckpt, args.dataset, args.sae_dir, args.tag)
     
-    save_features(cfg, model, submodule_dict, save_dir)
+    save_features(cfg, model, submodule_dict, save_dir, args)
     
     print(f"Saved feature splits and config to {save_dir}")
 

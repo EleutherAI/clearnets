@@ -222,3 +222,8 @@ prototype.py
 
 # PyTorch Lightning
 lightning_logs/
+
+# SAE auto interp
+raw_features/
+results/
+images/

@@ -1,6 +1,9 @@
 import json
-import pandas as pd
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from scipy import stats
 import plotly.express as px
 import plotly.io as pio
 
@@ -55,14 +58,16 @@ def build_df(path: Path):
     latent_type = []
     feature_idx = []
 
-    for type in ["sparse", "SAE", "Transcoder"]:
+    for type in ["SAE-8M", "Transcoder-8M"]: # "sparse", 
         if type == "sparse":
-            dir_path = path / f"Sparse-TinyStories8M-s=42" / "default"
+            dir_path = path / f"Sparse-TinyStories8M-s=42-full-vocab" / "default"
         else:
-            dir_path = path / f"Dense-TinyStories8M-s=42" / type.lower()
+            dir_path = path / f"Dense-TinyStories8M-s=42-full-vocab" / "default" # type.lower()
 
         for score_type in ["fuzz", "detection"]:
             for score_file in (dir_path / score_type).glob("*.txt"):
+                if not type in score_file.stem:
+                    continue
 
                 df = parse_score_file(score_file)
                 if df is None:
@@ -84,7 +89,10 @@ def build_df(path: Path):
             "probabilities": probabilities,
         }
     )
+    assert not df.empty
+    return df
 
+def plot(df):
     # Plot histograms of cross entropy loss with each score type being a different subplot
     # and each latent type being a different color
     out_path = Path("images")
@@ -125,7 +133,65 @@ def build_df(path: Path):
             )
 
 
+def plot_line(df):
+    out_path = Path("images")
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    for score_type in df["score_type"].unique():
+        # Create density curves for probabilities
+        plot_data = []
+        for latent_type in df["latent_type"].unique():
+            mask = (df["score_type"] == score_type) & (df["latent_type"] == latent_type)
+            values = df[mask]["probabilities"]
+            if len(values) > 0:
+                kernel = stats.gaussian_kde(values)
+                x_range = np.linspace(values.min(), values.max(), 200)
+                density = kernel(x_range)
+                plot_data.extend([{"x": x, "density": d, "latent_type": latent_type} 
+                                for x, d in zip(x_range, density)])
+        
+        fig = px.line(
+            plot_data,
+            x="x",
+            y="density",
+            color="latent_type",
+            title=f"Probability Distribution - {score_type}"
+        )
+        fig.write_image(out_path / f"autointerp_probabilities_{score_type}.pdf", format="pdf")
+
+        # Create density curves for accuracies
+        plot_data = []
+        for latent_type in df["latent_type"].unique():
+            mask = (df["score_type"] == score_type) & (df["latent_type"] == latent_type)
+            values = df[mask]["accuracy"]
+            if len(values) > 0:
+                kernel = stats.gaussian_kde(values)
+                x_range = np.linspace(values.min(), values.max(), 200)
+                density = kernel(x_range)
+                plot_data.extend([{"x": x, "density": d, "latent_type": latent_type} 
+                                for x, d in zip(x_range, density)])
+
+        fig = px.line(
+            plot_data,
+            x="x",
+            y="density",
+            color="latent_type",
+            title=f"Accuracy Distribution - {score_type}"
+        )
+        fig.write_image(out_path / f"autointerp_accuracies_{score_type}.pdf", format="pdf")
+
+    df.to_csv("autointerp_results.csv", index=False)
+
+    # Print statistics with inline formatting for debugger compatibility
+    for score_type in df["score_type"].unique():
+        for latent_type in df["latent_type"].unique():
+            print(f"{score_type} - {latent_type}:"); print(f"  Mean accuracy: {df[(df['score_type'] == score_type) & (df['latent_type'] == latent_type)]['accuracy'].mean()}"); print(f"  Mean probability: {df[(df['score_type'] == score_type) & (df['latent_type'] == latent_type)]['probabilities'].mean()}")
+
+
 if __name__ == "__main__":
-    path = Path.cwd() / "results/scores/tinystories"
+    path = Path.cwd() / "results/scores/roneneldan--TinyStories"
     
-    build_df(path)
+    df = build_df(path)
+    # plot(df)
+    plot_line(df)
+

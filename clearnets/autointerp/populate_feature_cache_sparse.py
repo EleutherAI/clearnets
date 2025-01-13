@@ -4,6 +4,7 @@ import glob
 from nnsight import NNsight
 from simple_parsing import ArgumentParser
 import torch
+from torch import Tensor
 from transformers import AutoTokenizer
 from sae_auto_interp.config import CacheConfig
 from sae_auto_interp.autoencoders.wrapper import AutoencoderLatents
@@ -11,10 +12,23 @@ from sae_auto_interp.features import FeatureCache
 from sae_auto_interp.utils import load_tokenized_data
 from typing import Any, Tuple, Dict
 
-from clearnets.generalization.inference.inference import to_dense
 from clearnets.train.sparse_gptneox import SparseGPTNeoForCausalLM
 from clearnets.train.sparse_gptneox_config import SparseGPTNeoConfig
 from clearnets.train.train_transformer import LightningWrapper, MODEL_CONFIG
+
+def to_dense(
+    top_acts: Tensor, top_indices: Tensor, num_latents: int, instance_dims=[0, 1]
+):
+    instance_shape = [top_acts.shape[i] for i in instance_dims]
+    dense_empty = torch.zeros(
+        *instance_shape,
+        num_latents,
+        device=top_acts.device,
+        dtype=top_acts.dtype,
+        requires_grad=True,
+    )
+    return dense_empty.scatter(-1, top_indices.long(), top_acts)
+
 
 def load_dense_mlp_transformer_saes(model):
     pass
@@ -106,13 +120,13 @@ def get_gptneo_hookpoints(model):
 
 @torch.inference_mode()
 def main(cfg: CacheConfig, args): 
-    features_name = f"{args.model}-{args.epoch}"
+    features_name = f"{args.tag}-{args.epoch}"
     save_dir = f"raw_features/{cfg.dataset_repo}/{features_name}"
     os.makedirs(save_dir, exist_ok=True)
     
     tokenizer = AutoTokenizer.from_pretrained(args.dataset)
 
-    ckpt_pattern = f"data/{args.dataset.replace('/', '--')}/{args.model}/checkpoints/epoch={args.epoch}-step=*.ckpt"
+    ckpt_pattern = f"data/{args.dataset.replace('/', '--')}/{args.base_model}/checkpoints/last.ckpt" # epoch={args.epoch}-step=*.ckpt"
     matching_ckpt = glob.glob(ckpt_pattern)[0]
     model = LightningWrapper.load_from_checkpoint(
         matching_ckpt,
@@ -127,11 +141,11 @@ def main(cfg: CacheConfig, args):
     model.tokenizer = tokenizer
     submodule_dict, model = load_sparse_mlp_transformer_latents(model)
 
-    save_features(cfg, model, submodule_dict, save_dir)
+    save_features(cfg, model, submodule_dict, save_dir, args)
     print(f"Saved feature splits and config to {save_dir}")
 
 
-def save_features(cfg, model, submodule_dict, save_dir):
+def save_features(cfg, model, submodule_dict, save_dir, args):
     tokens = load_tokenized_data(
         cfg.ctx_len,
         model.tokenizer,
@@ -154,16 +168,18 @@ def save_features(cfg, model, submodule_dict, save_dir):
     cache.save_config(
         save_dir=save_dir,
         cfg=cfg,
-        model_name=args.model
+        model_name=args.tokenizer_model
     )
 
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_arguments(CacheConfig, dest="options")
-    parser.add_argument("--model", type=str, default="sparse-8m-max-e=200-esp=15-s=42")
+    parser.add_argument("--tokenizer_model", type=str, default="roneneldan/TinyStories-8M")
+    parser.add_argument("--base_model", type=str, default="Sparse-TinyStories8M-s=42-full-vocab")
+    parser.add_argument("--tag", type=str, default="SAE-8M")
     parser.add_argument("--model_cfg", type=str, default="roneneldan/TinyStories-8M")
     # epoch=6-step=1456.ckpt has matched val loss with dense-8m-max-e=200-esp=15-s=42 epoch=21-step=1456.ckpt
-    parser.add_argument("--epoch", type=int, default=6) 
+    # parser.add_argument("--epoch", type=int, default=6) 
     parser.add_argument("--dataset", type=str, default="roneneldan/TinyStories") 
     args = parser.parse_args()
     cfg = args.options
