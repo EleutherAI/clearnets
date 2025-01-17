@@ -134,11 +134,11 @@ class SparseGPTNeoXConfig(PretrainedConfig):
 
     def __init__(
         self,
-        vocab_size=50432,
+        vocab_size=10000,
         hidden_size=128,
         num_hidden_layers=8,
         num_attention_heads=16,
-        intermediate_size=24576,
+        intermediate_size=512,
         k=32,
         sparse_mlp=True,
         hidden_act="gelu",

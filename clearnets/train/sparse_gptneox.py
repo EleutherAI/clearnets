@@ -109,7 +109,7 @@ class SparseMLP(nn.Module):
         top_acts, top_indices = self.pre_acts(hidden_states)
         y = decoder_impl(
             top_indices.view(-1, self.k).contiguous(), 
-            top_acts.view(-1, self.k).contiguous(), 
+            top_acts.view(-1, self.k).contiguous().float(), 
             self.dense_4h_to_h.weight.T.contiguous().T).reshape(*shape)
 
         hidden_states = y + self.dense_4h_to_h.bias
