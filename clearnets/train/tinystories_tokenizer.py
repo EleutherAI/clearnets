@@ -40,20 +40,20 @@ def get_vocab_restricted_tokenizer(
     original_tokens = {v: k for k, v in original_vocab.items()}
 
     # Count token frequencies
-    if not os.path.exists(f"{pretty_dataset_str}.bin"):
+    if not os.path.exists(f"data/{pretty_dataset_str}.bin"):
         print("Tokenizing dataset...")
         tokenize_hf_dataset(
             dataset=load_dataset(dataset_str, split="train"),
             tokenizer=base_tokenizer,
-            output_path=f"{pretty_dataset_str}.bin",
+            output_path=f"data/{pretty_dataset_str}.bin",
             text_key=text_key,
             append_eod=True,
             workers=10,
         )
-        index = MemmapIndex.build(f"{pretty_dataset_str}.bin", f"{pretty_dataset_str}.idx")
+        index = MemmapIndex.build(f"data/{pretty_dataset_str}.bin", f"data/{pretty_dataset_str}.idx")
     else:
         print("Loading index...")
-        index = MemmapIndex(f"{pretty_dataset_str}.bin", f"{pretty_dataset_str}.idx")
+        index = MemmapIndex(f"data/{pretty_dataset_str}.bin", f"data/{pretty_dataset_str}.idx")
 
     print("Counting tokens...")
     token_counts = index.count_next([])
