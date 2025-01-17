@@ -14,8 +14,8 @@ from transformers import AutoTokenizer
 import lovely_tensors as lt
 from sae.data import chunk_and_tokenize
 
-from clearnets.train.sparse_gptneox import SparseGPTNeoForCausalLM
-from clearnets.train.sparse_gptneox_config import SparseGPTNeoConfig
+from clearnets.train.sparse_gptneox import SparseGPTNeoXForCausalLM
+from clearnets.train.sparse_gptneox_config import SparseGPTNeoXConfig
 from clearnets.utils import set_seeds, assert_type
 
 lt.monkey_patch()
@@ -40,45 +40,8 @@ class ThresholdCheckpoint(Callback):
                 trainer.save_checkpoint(str(checkpoint_path))
                 print(f"\nValidation loss {current_loss:.4f} hit threshold {self.threshold:.4f}. Saved checkpoint to {checkpoint_path}")
 
-tiny_stories_8m_config = {
-    "_name_or_path": "//amlta41566503acb2986203fbd2fc58f9ff6/projects/CODE_YUANZHI/amlt-results/7318563093.69241-46ef7114-0cc8-4d54-8d19-c1863a28eb04/trainer_textbook/checkpoint-25750/",
-    "activation_function": "gelu_new",
-    "architectures": ["GPTNeoForCausalLM"],
-    "attention_dropout": 0,
-    "attention_layers": [
-        "global",
-        "local",
-        "global",
-        "local",
-        "global",
-        "local",
-        "global",
-        "local",
-    ],
-    "attention_types": [[["global", "local"], 4]],
-    "bos_token_id": 50256,
-    "embed_dropout": 0,
-    "eos_token_id": 50256,
-    "gradient_checkpointing": False,
-    "hidden_size": 256,
-    "initializer_range": 0.02,
-    "intermediate_size": None,
-    "layer_norm_epsilon": 1e-05,
-    "max_position_embeddings": 2048,
-    "model_type": "gpt_neo",
-    "num_heads": 16,
-    "num_layers": 8,
-    "resid_dropout": 0,
-    "summary_activation": None,
-    "summary_first_dropout": 0.1,
-    "summary_proj_to_labels": True,
-    "summary_type": "cls_index",
-    "summary_use_proj": True,
-    "torch_dtype": "bfloat16",  # "float32",
-    "transformers_version": "4.28.1",
-    "use_cache": True,
-    "vocab_size": 50257,
-    "window_size": 256,
+simple_stories_3m_config = {
+    'vocab_size': 50432
 }
 
 def get_dataloaders(dataset_str: str, tokenizer, batch_size: int, ctx_len: int, num_workers=16):
@@ -126,10 +89,10 @@ class LightningWrapper(pl.LightningModule):
         self.model = model
 
         self.train_acc = tm.Accuracy(
-            "multiclass", num_classes=tiny_stories_8m_config["vocab_size"]
+            "multiclass", num_classes=simple_stories_3m_config["vocab_size"]
         )
         self.val_acc = tm.Accuracy(
-            "multiclass", num_classes=tiny_stories_8m_config["vocab_size"]
+            "multiclass", num_classes=simple_stories_3m_config["vocab_size"]
         )
 
     def forward(self, input_ids):
@@ -296,9 +259,9 @@ def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--dense", action="store_true")
-    parser.add_argument("--dataset", type=str, default="roneneldan/TinyStories")
-    parser.add_argument("--tokenizer", type=str)
-    parser.add_argument("--config", type=str, default="roneneldan/TinyStories-8M")
+    parser.add_argument("--dataset", type=str, default="lennart-finke/SimpleStories")
+    parser.add_argument("--tokenizer", type=str, default="EleutherAI/SimpleStories-restricted")
+    parser.add_argument("--config", type=str, default="SimpleStories-3M")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--max_epochs", type=int, default=200)
     parser.add_argument("--early_stopping_patience", type=int, default=15)
@@ -309,9 +272,9 @@ def parse_args():
 
 
 MODEL_CONFIG = {
-    'roneneldan/TinyStories-8M': {
-        # https://huggingface.co/roneneldan/TinyStories-8M/blob/main/config.json
-        **tiny_stories_8m_config,
+    'SimpleStories-3M': {
+        # Use default config values
+        **simple_stories_3m_config,
         # max_length from TinyStories paper https://arxiv.org/pdf/2305.07759
         'ctx_len': 512
     }
@@ -321,7 +284,7 @@ def main():
     args = parse_args()
 
     # WandB run name
-    name = f"{'Dense' if args.dense else 'Sparse'} TinyStories8M s={SEED}{' ' + args.tag if args.tag else ''}"
+    name = f"{'Dense' if args.dense else 'Sparse'} SimpleStories3M s={SEED}{' ' + args.tag if args.tag else ''}"
     dir_path = Path("data") / args.dataset.replace('/', '--') / name.replace(" ", "-") / "checkpoints"
     if dir_path.exists():
         dir_path = dir_path.parent / f"{dir_path.stem} {datetime.datetime.now().strftime('%y-%m-%d')}"
@@ -331,26 +294,26 @@ def main():
     else:
         sparse_batch_size_scalar = 2
 
-    # Effective batch size = 80 * 16 = 1280
-    batch_size = 80 // sparse_batch_size_scalar
+    # highest batch size for dense is 55
+    batch_size = 20 // sparse_batch_size_scalar 
     gradient_accumulation_steps = 16 * sparse_batch_size_scalar
     
     # max_position_embeddings=context_length
-    config = SparseGPTNeoConfig(**MODEL_CONFIG[args.config], sparse_mlp=not args.dense)
-    model = SparseGPTNeoForCausalLM(config)
+    config = SparseGPTNeoXConfig(**MODEL_CONFIG[args.config], sparse_mlp=not args.dense)
+    model = SparseGPTNeoXForCausalLM(config)
     
     tokenizer = AutoTokenizer.from_pretrained(args.dataset if not args.tokenizer else args.tokenizer)
 
     ptl_model = LightningWrapper(model, tokenizer, args.lr, betas=(args.b1, 0.95))
     ptl_model.cuda()
 
-    name = f"{'Dense' if args.dense else 'Sparse'} 8M s={SEED} {args.tag + ' ' if args.tag else ''}"
+    name = f"{'Dense' if args.dense else 'Sparse'} 3M s={SEED} {args.tag + ' ' if args.tag else ''}"
     
     train_dataloader, val_dataloader  = get_dataloaders(
         args.dataset, tokenizer, batch_size, MODEL_CONFIG[args.config]['ctx_len']
     )
     
-    wandb_logger = WandbLogger(project="tinystories", name=name) if not args.debug else None
+    wandb_logger = WandbLogger(project="simplestories", name=name) if not args.debug else None
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=dir_path,

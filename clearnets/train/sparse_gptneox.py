@@ -1,7 +1,5 @@
-# TODO LQ update docstrings to mention sparsity
-
 # coding=utf-8
-# Copyright 2021 The Eleuther AI and HuggingFace Inc. team. All rights reserved.
+# Copyright 2022 EleutherAI The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,174 +12,72 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""PyTorch GPT Neo model."""
+"""PyTorch SparseGPTNeoX model."""
 
-import os
 from typing import Optional, Tuple, Union
 
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+from torch.nn import CrossEntropyLoss
 
-# Convert to imports from transformers
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache, StaticCache
-from transformers.generation import GenerationMixin
-from transformers.modeling_attn_mask_utils import AttentionMaskConverter, _prepare_4d_causal_attention_mask
-from transformers.modeling_outputs import (
-    BaseModelOutputWithPast,
-    BaseModelOutputWithPastAndCrossAttentions,
-    CausalLMOutputWithCrossAttentions,
-    CausalLMOutputWithPast,
-    QuestionAnsweringModelOutput,
-    SequenceClassifierOutputWithPast,
-    TokenClassifierOutput,
-)
-from transformers.modeling_utils import PreTrainedModel
-from transformers.pytorch_utils import is_torch_greater_or_equal_than_1_13
-from transformers.utils import (
+from transformers.file_utils import (
     add_code_sample_docstrings,
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
-    is_flash_attn_2_available,
-    is_flash_attn_greater_or_equal_2_10,
-    is_torch_fx_available,
+    replace_return_docstrings,
+)
+from transformers.generation import GenerationMixin
+from transformers.modeling_attn_mask_utils import AttentionMaskConverter
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    CausalLMOutputWithPast,
+)
+from transformers.modeling_utils import PreTrainedModel
+from transformers.utils import (
     logging,
-    
 )
-# from transformers.models.gpt_neo.configuration_gpt_neo import GPTNeoConfig
-from clearnets.train.sparse_gptneox_config import SparseGPTNeoConfig
-from transformers.models.gpt_neo.modeling_gpt_neo import (
-    GPTNeoSelfAttention, 
-    GPTNeoFlashAttention2, 
-    GPT_NEO_ATTENTION_CLASSES,
-    GPTNeoAttention,
+
+from transformers.models.gpt_neox.modeling_gpt_neox import (
+    GPTNeoXAttention,
     _CHECKPOINT_FOR_DOC,
+    _REAL_CHECKPOINT_FOR_DOC,
     _CONFIG_FOR_DOC,
-    # is_flash_attn_2_available,
-    # is_torch_fx_available,
-    GPT_NEO_START_DOCSTRING,
-    GPT_NEO_INPUTS_DOCSTRING,
-    GPTNeoMLP
+    GPT_NEOX_START_DOCSTRING,
+    GPT_NEOX_INPUTS_DOCSTRING,
+    GPTNeoXPreTrainedModel,
+    GPTNeoXRotaryEmbedding
 )
+
 from sae.utils import decoder_impl
 
 logger = logging.get_logger(__name__)
 
-class SparseMLP(nn.Module):
-    def __init__(self, intermediate_size, config):  # in MLP: intermediate_size= 4 * hidden_size
-        super().__init__()
-        embed_dim = config.hidden_size
-        self.k = config.k
-        self.c_fc = nn.Linear(embed_dim, intermediate_size * 8)
-        self.c_proj = nn.Linear(intermediate_size * 8, embed_dim)
-        self.act = ACT2FN[config.activation_function]
-        self.dropout = nn.Dropout(float(config.resid_dropout))
+from clearnets.train.sparse_gptneox_config import SparseGPTNeoXConfig
 
-    def pre_acts(self, hidden_states):
-        hidden_states = self.c_fc(hidden_states)
-        hidden_states = self.act(hidden_states)
-
-        return hidden_states.topk(self.k, sorted=False)
-
-    def forward(self, hidden_states):
-        shape = hidden_states.shape
-    
-        top_acts, top_indices = self.pre_acts(hidden_states)
-        y = decoder_impl(
-            top_indices.view(-1, self.k).contiguous(), 
-            top_acts.view(-1, self.k).contiguous(), 
-            self.c_proj.weight.T.contiguous().T).reshape(*shape) # .to(self.dtype)
-        
-        hidden_states = y + self.c_proj.bias
-        hidden_states = self.dropout(hidden_states)
-        return {
-            'hidden_states': hidden_states,
-            'top_indices': top_indices,
-            'top_acts': top_acts
-        }
-
-
-class SparseGPTNeoBlock(nn.Module):
-    def __init__(self, config, layer_id=None):
-        super().__init__()
-        hidden_size = config.hidden_size
-        inner_dim = config.intermediate_size if config.intermediate_size is not None else 4 * hidden_size
-        self.ln_1 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
-        self.attn = GPTNeoAttention(config, layer_id)
-        self.ln_2 = nn.LayerNorm(hidden_size, eps=config.layer_norm_epsilon)
-        if config.sparse_mlp:
-            self.mlp = SparseMLP(inner_dim, config)
-        else:
-            self.mlp = GPTNeoMLP(inner_dim, config)
-
-    def forward(
-        self,
-        hidden_states,
-        layer_past=None,
-        attention_mask=None,
-        head_mask=None,
-        use_cache=False,
-        output_attentions=False,
-        cache_position=None,
-    ):
-        residual = hidden_states
-        hidden_states = self.ln_1(hidden_states)
-        attn_outputs = self.attn(
-            hidden_states,
-            layer_past=layer_past,
-            attention_mask=attention_mask,
-            head_mask=head_mask,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            cache_position=cache_position,
-        )
-        attn_output = attn_outputs[0]  # output_attn: a, present, (attentions)
-        outputs = attn_outputs[1:]
-        # residual connection
-        hidden_states = attn_output + residual
-
-        residual = hidden_states
-        hidden_states = self.ln_2(hidden_states)
-        feed_forward_hidden_states = self.mlp(hidden_states)
-        if isinstance(feed_forward_hidden_states, dict):
-            feed_forward_hidden_states = feed_forward_hidden_states['hidden_states']
-        # residual connection
-        hidden_states = residual + feed_forward_hidden_states
-
-        if use_cache:
-            outputs = (hidden_states,) + outputs
-        else:
-            outputs = (hidden_states,) + outputs[1:]
-
-        return outputs  # hidden_states, past_kv, attentions
-
-
-class SparseGPTNeoPreTrainedModel(PreTrainedModel):
+class SparseGPTNeoXPreTrainedModel(PreTrainedModel):
     """
     An abstract class to handle weights initialization and a simple interface for downloading and loading pretrained
     models.
     """
 
-    config_class = SparseGPTNeoConfig
-    base_model_prefix = "transformer"
+    config_class = SparseGPTNeoXConfig
+    base_model_prefix = "sparse_gpt_neox"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["GPTNeoBlock"]
+    _no_split_modules = ["SparseGPTNeoXLayer"]
     _skip_keys_device_placement = "past_key_values"
     _supports_flash_attn_2 = True
     _supports_cache_class = True
     _supports_quantized_cache = True
-    _supports_static_cache = False  # TODO: needs a HybridCache
-
-    def __init__(self, *inputs, **kwargs):
-        super().__init__(*inputs, **kwargs)
+    _supports_static_cache = True
+    _supports_sdpa = True
+    _supports_flex_attn = True
 
     def _init_weights(self, module):
-        """Initialize the weights."""
-        if isinstance(module, (nn.Linear,)):
-            # Slightly different from the TF version which uses truncated_normal for initialization
-            # cf https://github.com/pytorch/pytorch/pull/5617
+        """Initialize the weights"""
+        if isinstance(module, nn.Linear):
             module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
             if module.bias is not None:
                 module.bias.data.zero_()
@@ -193,59 +89,172 @@ class SparseGPTNeoPreTrainedModel(PreTrainedModel):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
+class SparseMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        # Added topk parameter here
+        self.k = config.k
+        self.dense_h_to_4h = nn.Linear(config.hidden_size, config.intermediate_size * 8)
+        self.dense_4h_to_h = nn.Linear(config.intermediate_size * 8, config.hidden_size)
+        self.act = ACT2FN[config.hidden_act]
 
-@add_start_docstrings(
-    "The bare GPT Neo Model transformer outputting raw hidden-states without any specific head on top.",
-    GPT_NEO_START_DOCSTRING,
-)
-class SparseGPTNeoModel(SparseGPTNeoPreTrainedModel):
+    def pre_acts(self, hidden_states):
+        hidden_states = self.dense_h_to_4h(hidden_states)
+        hidden_states = self.act(hidden_states)
+
+        return hidden_states.topk(self.k, sorted=False)
+
+    def forward(self, hidden_states):
+        shape = hidden_states.shape
+        top_acts, top_indices = self.pre_acts(hidden_states)
+        y = decoder_impl(
+            top_indices.view(-1, self.k).contiguous(), 
+            top_acts.view(-1, self.k).contiguous(), 
+            self.dense_4h_to_h.weight.T.contiguous().T).reshape(*shape)
+
+        hidden_states = y + self.dense_4h_to_h.bias
+
+        return {
+            'hidden_states': hidden_states,
+            'top_indices': top_indices,
+            'top_acts': top_acts
+        }
+
+class GPTNeoXMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.dense_h_to_4h = nn.Linear(config.hidden_size, config.intermediate_size)
+        self.dense_4h_to_h = nn.Linear(config.intermediate_size, config.hidden_size)
+        self.act = ACT2FN[config.hidden_act]
+
+    def forward(self, hidden_states):
+        hidden_states = self.dense_h_to_4h(hidden_states)
+        hidden_states = self.act(hidden_states)
+        hidden_states = self.dense_4h_to_h(hidden_states)
+        return hidden_states
+
+
+class SparseGPTNeoXLayer(nn.Module):
+    def __init__(self, config, layer_idx):
+        super().__init__()
+        self.use_parallel_residual = config.use_parallel_residual
+        self.input_layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.post_attention_layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.post_attention_dropout = nn.Dropout(config.hidden_dropout)
+        self.post_mlp_dropout = nn.Dropout(config.hidden_dropout)
+        self.attention = GPTNeoXAttention(config, layer_idx)
+        if config.sparse_mlp:
+            self.mlp = SparseMLP(config)
+        else:
+            self.mlp = GPTNeoXMLP(config)
+
+    def forward(
+        self,
+        hidden_states: Optional[torch.FloatTensor],
+        attention_mask: Optional[torch.FloatTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = False,
+        layer_past: Optional[Cache] = None,
+        output_attentions: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+    ):
+        attention_layer_outputs = self.attention(
+            self.input_layernorm(hidden_states),
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            layer_past=layer_past,
+            head_mask=head_mask,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            cache_position=cache_position,
+            position_embeddings=position_embeddings,
+        )
+        attn_output = attention_layer_outputs[0]  # output_attn: attn_output, present, (attn_weights)
+        attn_output = self.post_attention_dropout(attn_output)
+        outputs = attention_layer_outputs[1:]
+
+        if self.use_parallel_residual:
+            # pseudocode:
+            # x = x + attn(ln1(x)) + mlp(ln2(x))
+            mlp_output = self.mlp(self.post_attention_layernorm(hidden_states))
+            mlp_output = self.post_mlp_dropout(mlp_output)
+            hidden_states = mlp_output + attn_output + hidden_states
+        else:
+            # pseudocode:
+            # x = x + attn(ln1(x))
+            # x = x + mlp(ln2(x))
+            attn_output = attn_output + hidden_states
+            mlp_output = self.mlp(self.post_attention_layernorm(attn_output))
+            if isinstance(mlp_output, dict):
+                mlp_output = mlp_output['hidden_states']
+            mlp_output = self.post_mlp_dropout(mlp_output)
+            hidden_states = mlp_output + attn_output
+
+        if use_cache:
+            outputs = (hidden_states,) + outputs  # hidden_states, present, (attn_weights)
+        else:
+            outputs = (hidden_states,) + outputs[1:]  # hidden_states, (attn_weights)
+
+        return outputs
+
+class SparseGPTNeoXModel(GPTNeoXPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
+        self.config = config
 
-        self.embed_dim = config.hidden_size
-        self.wte = nn.Embedding(config.vocab_size, self.embed_dim)
-        self.wpe = nn.Embedding(config.max_position_embeddings, self.embed_dim)
-        self.drop = nn.Dropout(float(config.embed_dropout))
-        self.h = nn.ModuleList([SparseGPTNeoBlock(config, layer_id=i) for i in range(config.num_layers)])
-        self.ln_f = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_epsilon)
+        self.embed_in = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.emb_dropout = nn.Dropout(config.hidden_dropout)
+        self.layers = nn.ModuleList([SparseGPTNeoXLayer(config, i) for i in range(config.num_hidden_layers)])
+        self.final_layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.rotary_emb = GPTNeoXRotaryEmbedding(config=config)
+
+        self._attn_implementation = config._attn_implementation
 
         self.gradient_checkpointing = False
+
         # Initialize weights and apply final processing
         self.post_init()
 
     def get_input_embeddings(self):
-        return self.wte
+        return self.embed_in
 
-    def set_input_embeddings(self, new_embeddings):
-        self.wte = new_embeddings
+    def set_input_embeddings(self, value):
+        self.embed_in = value
 
-    @add_start_docstrings_to_model_forward(GPT_NEO_INPUTS_DOCSTRING)
+    @add_start_docstrings_to_model_forward(GPT_NEOX_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=BaseModelOutputWithPastAndCrossAttentions,
+        real_checkpoint=_REAL_CHECKPOINT_FOR_DOC,
+        output_type=BaseModelOutputWithPast,
         config_class=_CONFIG_FOR_DOC,
     )
     def forward(
         self,
-        input_ids: Optional[torch.Tensor] = None,
-        past_key_values: Optional[Union[Cache, Tuple[torch.FloatTensor]]] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
+        input_ids: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        past_key_values: Optional[Union[Cache, Tuple[Tuple[torch.FloatTensor]]]] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-    ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
+    ) -> Union[Tuple, BaseModelOutputWithPast]:
+        r"""
+        use_cache (`bool`, *optional*):
+            If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
+            `past_key_values`).
+        """
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
-        use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        use_cache = use_cache if use_cache is not None else self.config.use_cache
 
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
@@ -258,7 +267,7 @@ class SparseGPTNeoModel(SparseGPTNeoPreTrainedModel):
                 use_cache = False
 
         if inputs_embeds is None:
-            inputs_embeds = self.wte(input_ids)
+            inputs_embeds = self.embed_in(input_ids)
 
         # kept for BC (non `Cache` `past_key_values` inputs)
         return_legacy_cache = False
@@ -288,59 +297,62 @@ class SparseGPTNeoModel(SparseGPTNeoPreTrainedModel):
 
         # Prepare head mask if needed
         # 1.0 in head_mask indicate we keep the head
-        # attention_probs has shape bsz x num_heads x N x N
-        # head_mask has shape n_layer x batch x num_heads x N x N
-        head_mask = self.get_head_mask(head_mask, self.config.num_layers)
-        position_embeds = self.wpe(position_ids)
-        hidden_states = inputs_embeds + position_embeds
+        # attention_probs has shape bsz x n_heads x N x N
+        # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
+        # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
+        converted_head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+        # Flex Attention converts it to a separate mask
+        if head_mask is not None:
+            converted_head_mask = ~converted_head_mask.bool() * torch.finfo(inputs_embeds.dtype).min
+            converted_head_mask = converted_head_mask.to(dtype=self.dtype, device=self.device)
+        head_mask = converted_head_mask
 
-        if token_type_ids is not None:
-            token_type_ids = token_type_ids.view(-1, seq_length)
-            token_type_embeds = self.wte(token_type_ids)
-            hidden_states = hidden_states + token_type_embeds
+        hidden_states = self.emb_dropout(inputs_embeds)
 
-        hidden_states = self.drop(hidden_states)
-        output_shape = (-1, seq_length, hidden_states.size(-1))
+        # create position embeddings to be shared across the decoder layers
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
         next_decoder_cache = None
-        all_self_attentions = () if output_attentions else None
+        all_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
-        for i, block in enumerate(self.h):
+        for i, layer in enumerate(
+            self.layers,
+        ):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
             if self.gradient_checkpointing and self.training:
                 outputs = self._gradient_checkpointing_func(
-                    block.__call__,
+                    layer.__call__,
                     hidden_states,
-                    None,
                     causal_mask,
+                    position_ids,
                     head_mask[i],
                     use_cache,
+                    None,
                     output_attentions,
                     cache_position,
+                    position_embeddings,
                 )
             else:
-                outputs = block(
+                outputs = layer(
                     hidden_states,
-                    layer_past=past_key_values,
                     attention_mask=causal_mask,
+                    position_ids=position_ids,
                     head_mask=head_mask[i],
+                    layer_past=past_key_values,
                     use_cache=use_cache,
                     output_attentions=output_attentions,
                     cache_position=cache_position,
+                    position_embeddings=position_embeddings,
                 )
-
             hidden_states = outputs[0]
-            if use_cache:
+            if use_cache is True:
                 next_decoder_cache = outputs[1]
-
             if output_attentions:
-                all_self_attentions = all_self_attentions + (outputs[2 if use_cache else 1],)
+                all_attentions = all_attentions + (outputs[2 if use_cache else 1],)
 
-        hidden_states = self.ln_f(hidden_states)
-
-        hidden_states = hidden_states.view(output_shape)
+        hidden_states = self.final_layer_norm(hidden_states)
         # Add last hidden state
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
@@ -350,15 +362,13 @@ class SparseGPTNeoModel(SparseGPTNeoPreTrainedModel):
             next_cache = next_cache.to_legacy_cache()
 
         if not return_dict:
-            return tuple(
-                v for v in [hidden_states, next_cache, all_hidden_states, all_self_attentions] if v is not None
-            )
+            return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_attentions] if v is not None)
 
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=next_cache,
             hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
+            attentions=all_attentions,
         )
 
     # Copied from transformers.models.llama.modeling_llama.LlamaModel._update_causal_mask
@@ -371,7 +381,7 @@ class SparseGPTNeoModel(SparseGPTNeoPreTrainedModel):
         output_attentions: bool,
     ):
         if self.config._attn_implementation == "flash_attention_2":
-            if attention_mask is not None and 0.0 in attention_mask:
+            if attention_mask is not None and (attention_mask == 0.0).any():
                 return attention_mask
             return None
 
@@ -486,120 +496,116 @@ class SparseGPTNeoModel(SparseGPTNeoPreTrainedModel):
 
 
 @add_start_docstrings(
-    """
-    The GPT Neo Model transformer with a language modeling head on top (linear layer with weights tied to the input
-    embeddings).
-    """,
-    GPT_NEO_START_DOCSTRING,
+    """SparseGPTNeoX Model with a `language modeling` head on top for CLM fine-tuning.""", GPT_NEOX_START_DOCSTRING
 )
-class SparseGPTNeoForCausalLM(SparseGPTNeoPreTrainedModel, GenerationMixin):
-    _tied_weights_keys = ["lm_head.weight"]
+class SparseGPTNeoXForCausalLM(GPTNeoXPreTrainedModel, GenerationMixin):
+    _tied_weights_keys = ["embed_out.weight"]
 
     def __init__(self, config):
         super().__init__(config)
-        self.transformer = SparseGPTNeoModel(config)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+        self.gpt_neox = SparseGPTNeoXModel(config)
+        self.embed_out = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
         # Initialize weights and apply final processing
         self.post_init()
 
     def get_output_embeddings(self):
-        return self.lm_head
+        return self.embed_out
 
     def set_output_embeddings(self, new_embeddings):
-        self.lm_head = new_embeddings
+        self.embed_out = new_embeddings
 
-    @add_start_docstrings_to_model_forward(GPT_NEO_INPUTS_DOCSTRING)
-    @add_code_sample_docstrings(
-        checkpoint=_CHECKPOINT_FOR_DOC,
-        output_type=CausalLMOutputWithCrossAttentions,
-        config_class=_CONFIG_FOR_DOC,
-    )
+    @add_start_docstrings_to_model_forward(GPT_NEOX_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
+    @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
-        input_ids: Optional[torch.Tensor] = None,
-        past_key_values: Optional[Union[Cache, Tuple[torch.FloatTensor]]] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        token_type_ids: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        head_mask: Optional[torch.Tensor] = None,
-        inputs_embeds: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
+        input_ids: Optional[torch.LongTensor] = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        head_mask: Optional[torch.FloatTensor] = None,
+        past_key_values: Optional[Union[Cache, Tuple[Tuple[torch.FloatTensor]]]] = None,
+        labels: Optional[torch.LongTensor] = None,
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
-    ) -> Union[Tuple[torch.Tensor], CausalLMOutputWithCrossAttentions]:
+    ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
-            Labels for language modeling. Note that the labels **are shifted** inside the model, i.e. you can set
-            `labels = input_ids` Indices are selected in `[-100, 0, ..., config.vocab_size]` All labels set to `-100`
-            are ignored (masked), the loss is only computed for labels in `[0, ..., config.vocab_size]`
-        """
+            Labels for computing the left-to-right language modeling loss (next word prediction). Indices should be in
+            `[-100, 0, ..., config.vocab_size]` (see `input_ids` docstring) Tokens with indices set to `-100` are
+            ignored (masked), the loss is only computed for the tokens with labels n `[0, ..., config.vocab_size]`.
+        use_cache (`bool`, *optional*):
+            If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding (see
+            `past_key_values`).
+
+        Returns:
+
+        Example:
+
+        ```python
+        >>> from transformers import AutoTokenizer, GPTNeoXForCausalLM, GPTNeoXConfig
+        >>> import torch
+
+        >>> tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
+        >>> config = GPTNeoXConfig.from_pretrained("EleutherAI/gpt-neox-20b")
+        >>> config.is_decoder = True
+        >>> model = GPTNeoXForCausalLM.from_pretrained("EleutherAI/gpt-neox-20b", config=config)
+
+        >>> inputs = tokenizer("Hello, my dog is cute", return_tensors="pt")
+        >>> outputs = model(**inputs)
+
+        >>> prediction_logits = outputs.logits
+        ```"""
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        transformer_outputs = self.transformer(
+        outputs = self.gpt_neox(
             input_ids,
-            past_key_values=past_key_values,
             attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
             position_ids=position_ids,
             head_mask=head_mask,
             inputs_embeds=inputs_embeds,
+            past_key_values=past_key_values,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
         )
-        hidden_states = transformer_outputs[0]
 
-        lm_logits = self.lm_head(hidden_states)
+        hidden_states = outputs[0]
+        lm_logits = self.embed_out(hidden_states)
 
-        loss = None
+        lm_loss = None
         if labels is not None:
             # move labels to correct device to enable model parallelism
             labels = labels.to(lm_logits.device)
-            # Compute loss in fp32 to match with mesh-tf version
-            # https://github.com/EleutherAI/gpt-neo/blob/89ce74164da2fb16179106f54e2269b5da8db333/models/gpt2/gpt2.py#L179
-            lm_logits = lm_logits.to(torch.float32)
-
-            # Shift so that tokens < n predict n
-            shift_logits = lm_logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            # Flatten the tokens
+            # we are doing next-token prediction; shift prediction scores and input ids by one
+            shift_logits = lm_logits[:, :-1, :].contiguous()
+            labels = labels[:, 1:].contiguous()
             loss_fct = CrossEntropyLoss()
-            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-
-            lm_logits = lm_logits.to(hidden_states.dtype)
-            loss = loss.to(hidden_states.dtype)
+            lm_loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), labels.view(-1))
 
         if not return_dict:
-            output = (lm_logits,) + transformer_outputs[1:]
-            return ((loss,) + output) if loss is not None else output
+            output = (lm_logits,) + outputs[1:]
+            return ((lm_loss,) + output) if lm_loss is not None else output
 
         return CausalLMOutputWithPast(
-            loss=loss,
+            loss=lm_loss,
             logits=lm_logits,
-            past_key_values=transformer_outputs.past_key_values,
-            hidden_states=transformer_outputs.hidden_states,
-            attentions=transformer_outputs.attentions,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
         )
 
-    @staticmethod
-    def _reorder_cache(
-        past_key_values: Tuple[Tuple[torch.Tensor]], beam_idx: torch.Tensor
-    ) -> Tuple[Tuple[torch.Tensor]]:
-        """
-        This function is used to re-order the `past_key_values` cache if [`~PretrainedModel.beam_search`] or
-        [`~PretrainedModel.beam_sample`] is called. This is required to match `past_key_values` with the correct
-        beam_idx at every generation step.
-        """
-        return tuple(
-            tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past)
-            for layer_past in past_key_values
-        )
-
-
-
+    def _reorder_cache(self, past_key_values, beam_idx):
+        reordered_past = ()
+        for layer_past in past_key_values:
+            reordered_past += (
+                tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past[:2])
+                + layer_past[2:],
+            )
+        return reordered_past
