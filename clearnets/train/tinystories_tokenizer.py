@@ -1,7 +1,9 @@
 from typing import Optional
 import os
 from copy import deepcopy
+from argparse import ArgumentParser
 
+from tokenizers import models
 import torch
 from datasets import load_dataset
 from transformers import AutoTokenizer
@@ -9,10 +11,12 @@ from transformers import PreTrainedTokenizerFast
 from tokengrams import MemmapIndex, tokenize_hf_dataset
 
 
-def get_tinystories_tokenizer(
+def get_vocab_restricted_tokenizer(
     base_tokenizer_name: str,
     max_vocab_size: int = 10_000,
     save_path: Optional[str] = None,
+    dataset_str: str = "roneneldan/TinyStories",
+    text_key: str = "text",
 ):
     """
     Restrict a GPT-NeoX tokenizer's vocabulary to the most common tokens in the TinyStories dataset while preserving
@@ -27,7 +31,7 @@ def get_tinystories_tokenizer(
         max_vocab_size: Maximum number of tokens to keep
         save_path: Optional path to save the modified tokenizer
     """
-    
+    pretty_dataset_str = dataset_str.split('/')[-1]
 
     base_tokenizer = AutoTokenizer.from_pretrained(base_tokenizer_name)
     base_tokenizer.pad_token = base_tokenizer.eos_token
@@ -36,20 +40,20 @@ def get_tinystories_tokenizer(
     original_tokens = {v: k for k, v in original_vocab.items()}
 
     # Count token frequencies
-    if not os.path.exists("tinystories.bin"):
+    if not os.path.exists(f"{pretty_dataset_str}.bin"):
         print("Tokenizing dataset...")
         tokenize_hf_dataset(
-            dataset=load_dataset("roneneldan/TinyStories", split="train"),
+            dataset=load_dataset(dataset_str, split="train"),
             tokenizer=base_tokenizer,
-            output_path="tinystories.bin",
-            text_key="text",
+            output_path=f"{pretty_dataset_str}.bin",
+            text_key=text_key,
             append_eod=True,
             workers=10,
         )
-        index = MemmapIndex.build("tinystories.bin", "tinystories.idx")
+        index = MemmapIndex.build(f"{pretty_dataset_str}.bin", f"{pretty_dataset_str}.idx")
     else:
         print("Loading index...")
-        index = MemmapIndex("tinystories.bin", "tinystories.idx")
+        index = MemmapIndex(f"{pretty_dataset_str}.bin", f"{pretty_dataset_str}.idx")
 
     print("Counting tokens...")
     token_counts = index.count_next([])
@@ -104,7 +108,18 @@ def get_tinystories_tokenizer(
 
 
 if __name__ == "__main__":
-    tokenizer = get_tinystories_tokenizer("EleutherAI/gpt-neo-2.7B", save_path="data/tinystories/restricted_tokenizer")
+    args = ArgumentParser()
+    args.add_argument("--dataset", type=str, default="lennart-finke/SimpleStories")
+    args = args.parse_args()
 
-    # Upload to hub
-    tokenizer.push_to_hub("EleutherAI/TinyStories-restricted")
+    pretty_dataset_str = args.dataset.split('/')[-1]
+
+    tokenizer = get_vocab_restricted_tokenizer(
+        "EleutherAI/gpt-neo-2.7B", 
+        save_path=f"data/{pretty_dataset_str}/restricted_tokenizer",
+        dataset_str=args.dataset,
+        text_key="story"
+    )
+    tokenizer.push_to_hub(f"EleutherAI/{pretty_dataset_str}-restricted")
+
+    tokenizer = AutoTokenizer.from_pretrained(f"EleutherAI/{pretty_dataset_str}-restricted")
