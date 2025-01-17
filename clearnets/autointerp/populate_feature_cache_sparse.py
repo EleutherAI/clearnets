@@ -121,7 +121,7 @@ def get_gptneo_hookpoints(model):
 @torch.inference_mode()
 def main(cfg: CacheConfig, args): 
     features_name = f"{args.tag}-{args.epoch if args.epoch else 'last'}"
-    save_dir = f"raw_features/{cfg.dataset_repo}/{features_name}"
+    save_dir = f"data/raw_features/{cfg.dataset_repo}/{features_name}"
     os.makedirs(save_dir, exist_ok=True)
     
     tokenizer = AutoTokenizer.from_pretrained(args.dataset)

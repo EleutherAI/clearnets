@@ -31,7 +31,7 @@ def main(args):
         for module in modules
     }
     dataset = FeatureDataset(
-        raw_dir=f"raw_features",
+        raw_dir=f"data/raw_features",
         cfg=feature_cfg,
         modules=modules,
         features=feature_dict,

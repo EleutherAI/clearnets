@@ -14,7 +14,7 @@ from clearnets.train.train_transformer import LightningWrapper, MODEL_CONFIG
 
 
 def load_artifacts(cfg, ckpt_path: str, dataset: str, sae_dir, features_name):
-    save_dir = f"raw_features/{cfg.dataset_repo}/{features_name}"
+    save_dir = f"data/raw_features/{cfg.dataset_repo}/{features_name}"
     os.makedirs(save_dir, exist_ok=True)
 
     tokenizer = AutoTokenizer.from_pretrained(dataset)
