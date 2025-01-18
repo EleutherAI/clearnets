@@ -98,6 +98,7 @@ def main():
         adam_beta1=args.b1,
         adam_beta2=0.95,
         bf16=True,
+        dataloader_num_workers=8,
         ddp_find_unused_parameters=False,
         eval_strategy="epoch",     # evaluate at the end of each epoch
         learning_rate=args.lr,
