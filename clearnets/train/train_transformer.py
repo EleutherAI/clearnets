@@ -23,7 +23,7 @@ set_seeds(SEED)
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--dense", action="store_true")
+    parser.add_argument("--mlp_mode", choices=["sparse", "dense", "sparse_low_rank"], default="sparse_low_rank")
     parser.add_argument("--dataset", type=str, default="HuggingFaceFW/fineweb")
     parser.add_argument("--tokenizer", type=str, default="EleutherAI/FineWeb-restricted")
     parser.add_argument("--config", type=str, default="FineWeb-28M")
@@ -81,18 +81,19 @@ def main():
     )
     processed_dataset = assert_type(DatasetDict, processed_dataset)
     processed_dataset.set_format(type="torch", columns=["input_ids"])
-    processed_dataset = processed_dataset['train'].train_test_split(test_size=0.005, seed=42)
+    processed_dataset = processed_dataset['train'].train_test_split(test_size=0.005, seed=SEED)
 
     # WandB run name
-    name = f"{'Dense' if args.dense else 'Sparse'} FineWeb10B-28M s={SEED}{' ' + args.tag if args.tag else ''}"
+    name = f"{args.mlp_mode} FineWeb10B-28M s={SEED}{' ' + args.tag if args.tag else ''}"
     dir_path = Path("data") / args.dataset.replace('/', '--') / name.replace(" ", "-") / "checkpoints"
     if dir_path.exists():
         dir_path = dir_path.parent / f"{dir_path.stem} {datetime.datetime.now().strftime('%y-%m-%d')}"
  
-    config = SparseGPTNeoXConfig(**MODEL_CONFIG[args.config], sparse_mlp=not args.dense)
+    config = SparseGPTNeoXConfig(**MODEL_CONFIG[args.config], mlp_mode=args.mlp_mode)
     model = SparseGPTNeoXForCausalLM(config)
 
-    name = f"{'Dense' if args.dense else 'Sparse'} 3M s={SEED} {args.tag + ' ' if args.tag else ''}"
+    print(sum(p.numel() for p in model.parameters()))
+
     training_args = TrainingArguments(
         adam_beta1=args.b1,
         adam_beta2=0.95,

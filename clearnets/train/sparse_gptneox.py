@@ -16,6 +16,8 @@
 
 from typing import Optional, Tuple, Union
 
+import einops
+
 import torch
 import torch.utils.checkpoint
 from torch import nn
@@ -92,6 +94,45 @@ class SparseGPTNeoXPreTrainedModel(PreTrainedModel):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
+class SparseLowRankMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.k = config.k
+        self.encoder = nn.Sequential(
+            nn.Linear(config.hidden_size, config.hidden_size // 8, bias=False),
+            nn.Linear(config.hidden_size // 8, config.intermediate_size * 8)
+        )
+
+        self.decoder_down = nn.Linear(config.intermediate_size * 8, config.hidden_size // 8, bias=False)
+        self.decoder_up = nn.Linear(config.hidden_size // 8, config.hidden_size)
+
+        self.act = ACT2FN[config.hidden_act]
+
+    def pre_acts(self, hidden_states):
+        hidden_states = self.encoder(hidden_states)
+        hidden_states = self.act(hidden_states)
+
+        return hidden_states.topk(self.k, sorted=False)
+
+    def forward(self, hidden_states):
+        shape = hidden_states.shape
+        top_acts, top_indices = self.pre_acts(hidden_states)
+
+        low_rank_decoder = einops.einsum(self.decoder_down.weight, self.decoder_up.weight, "hi_8 in_8, hi hi_8 -> hi in_8")
+        
+        y = decoder_impl(
+            top_indices.view(-1, self.k).contiguous(), 
+            top_acts.view(-1, self.k).contiguous().float(), 
+            low_rank_decoder.T.contiguous().T).reshape(*shape)
+
+        hidden_states = y + self.decoder_up.bias
+
+        return {
+            'hidden_states': hidden_states,
+            'top_indices': top_indices,
+            'top_acts': top_acts
+        }
+
 class SparseMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -146,10 +187,12 @@ class SparseGPTNeoXLayer(nn.Module):
         self.post_attention_dropout = nn.Dropout(config.hidden_dropout)
         self.post_mlp_dropout = nn.Dropout(config.hidden_dropout)
         self.attention = GPTNeoXAttention(config, layer_idx)
-        if config.sparse_mlp:
-            self.mlp = SparseMLP(config)
-        else:
+        if config.mlp_mode == "dense":
             self.mlp = GPTNeoXMLP(config)
+        elif config.mlp_mode == "sparse":
+            self.mlp = SparseMLP(config)
+        elif config.mlp_mode == "sparse_low_rank":
+            self.mlp = SparseLowRankMLP(config)
 
     def forward(
         self,
