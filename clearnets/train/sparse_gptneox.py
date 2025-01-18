@@ -47,7 +47,6 @@ from transformers.models.gpt_neox.modeling_gpt_neox import (
     _CONFIG_FOR_DOC,
     GPT_NEOX_START_DOCSTRING,
     GPT_NEOX_INPUTS_DOCSTRING,
-    GPTNeoXPreTrainedModel,
     GPTNeoXRotaryEmbedding
 )
 
@@ -78,7 +77,11 @@ class SparseGPTNeoXPreTrainedModel(PreTrainedModel):
     def _init_weights(self, module):
         """Initialize the weights"""
         if isinstance(module, nn.Linear):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            if module.out_features == self.config.vocab_size:
+                # Zero-initialize the unembedding module
+                module.weight.data.zero_()
+            else:  
+                module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
             if module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, nn.Embedding):
@@ -199,7 +202,7 @@ class SparseGPTNeoXLayer(nn.Module):
 
         return outputs
 
-class SparseGPTNeoXModel(GPTNeoXPreTrainedModel):
+class SparseGPTNeoXModel(SparseGPTNeoXPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.config = config
@@ -498,7 +501,7 @@ class SparseGPTNeoXModel(GPTNeoXPreTrainedModel):
 @add_start_docstrings(
     """SparseGPTNeoX Model with a `language modeling` head on top for CLM fine-tuning.""", GPT_NEOX_START_DOCSTRING
 )
-class SparseGPTNeoXForCausalLM(GPTNeoXPreTrainedModel, GenerationMixin):
+class SparseGPTNeoXForCausalLM(SparseGPTNeoXPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["embed_out.weight"]
 
     def __init__(self, config):
