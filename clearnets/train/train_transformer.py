@@ -5,9 +5,11 @@ import os
 
 from datasets import load_dataset, DatasetDict
 from sae.data import chunk_and_tokenize
-from transformers import AutoTokenizer, DataCollatorForLanguageModeling, Trainer, TrainingArguments, TrainerCallback
+from transformers import AutoTokenizer, DataCollatorForLanguageModeling, Trainer, TrainingArguments, TrainerCallback, GPTNeoXTokenizerFast
 import torch
 import torch.distributed as dist
+
+from tokenizers import Tokenizer, decoders, models, normalizers, pre_tokenizers, trainers
 
 from clearnets.train.sparse_gptneox import SparseGPTNeoXForCausalLM
 from clearnets.train.sparse_gptneox_config import SparseGPTNeoXConfig
@@ -22,9 +24,9 @@ def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--dense", action="store_true")
-    parser.add_argument("--dataset", type=str, default="lennart-finke/SimpleStories")
-    parser.add_argument("--tokenizer", type=str, default="EleutherAI/SimpleStories-restricted")
-    parser.add_argument("--config", type=str, default="SimpleStories-3M")
+    parser.add_argument("--dataset", type=str, default="HuggingFaceFW/fineweb")
+    parser.add_argument("--tokenizer", type=str, default="EleutherAI/FineWeb-restricted")
+    parser.add_argument("--config", type=str, default="FineWeb-28M")
     parser.add_argument("--num_epochs", type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=128) # dense batch size 128, sparse batch size
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -34,7 +36,7 @@ def parse_args():
 
 
 MODEL_CONFIG = {
-    'SimpleStories-3M': {
+    'FineWeb-28M': {
         # Use default config values
         # max_length from TinyStories paper https://arxiv.org/pdf/2305.07759
         'ctx_len': 512
@@ -66,7 +68,11 @@ def main():
     args = parse_args()
     tokenizer = AutoTokenizer.from_pretrained(args.dataset if not args.tokenizer else args.tokenizer)
 
-    dataset = assert_type(DatasetDict, load_dataset(args.dataset))
+    dataset = assert_type(
+        DatasetDict,
+        load_dataset(args.dataset, name="sample-10BT" if args.dataset == "HuggingFaceFW/fineweb" else None)
+    )
+
     processed_dataset = chunk_and_tokenize(
         dataset,
         tokenizer,
@@ -75,9 +81,10 @@ def main():
     )
     processed_dataset = assert_type(DatasetDict, processed_dataset)
     processed_dataset.set_format(type="torch", columns=["input_ids"])
+    processed_dataset = processed_dataset['train'].train_test_split(test_size=0.005, seed=42)
 
     # WandB run name
-    name = f"{'Dense' if args.dense else 'Sparse'} SimpleStories3M s={SEED}{' ' + args.tag if args.tag else ''}"
+    name = f"{'Dense' if args.dense else 'Sparse'} FineWeb10B-28M s={SEED}{' ' + args.tag if args.tag else ''}"
     dir_path = Path("data") / args.dataset.replace('/', '--') / name.replace(" ", "-") / "checkpoints"
     if dir_path.exists():
         dir_path = dir_path.parent / f"{dir_path.stem} {datetime.datetime.now().strftime('%y-%m-%d')}"
