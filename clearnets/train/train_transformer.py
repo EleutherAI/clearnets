@@ -54,7 +54,7 @@ class GenerationLoggerCallback(TrainerCallback):
         if state.global_step % self.log_interval == 0:
             # Generate output
             with torch.no_grad():
-                output = self.model.generate(max_length=50)
+                output = self.model.generate(max_length=50, do_sample=True)
             
             generated_text = self.tokenizer.decode(output[0], skip_special_tokens=True)
             print(f"Step {state.global_step}:")
@@ -91,8 +91,6 @@ def main():
  
     config = SparseGPTNeoXConfig(**MODEL_CONFIG[args.config], mlp_mode=args.mlp_mode)
     model = SparseGPTNeoXForCausalLM(config)
-
-    print(sum(p.numel() for p in model.parameters()))
 
     training_args = TrainingArguments(
         adam_beta1=args.b1,
