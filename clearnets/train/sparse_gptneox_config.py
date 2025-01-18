@@ -138,9 +138,8 @@ class SparseGPTNeoXConfig(PretrainedConfig):
         hidden_size=768,
         num_hidden_layers=4,
         num_attention_heads=16,
-        intermediate_size=512,
         k=32,
-        mlp_mode="sparse",
+        mlp_mode="dense",
         hidden_act="gelu",
         rotary_pct=0.25,
         rotary_emb_base=10048,
@@ -165,7 +164,7 @@ class SparseGPTNeoXConfig(PretrainedConfig):
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
-        self.intermediate_size = intermediate_size
+        self.intermediate_size = 4 * hidden_size
         self.k = k
         self.mlp_mode = mlp_mode
         self.hidden_act = hidden_act
