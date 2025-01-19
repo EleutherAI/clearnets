@@ -23,11 +23,12 @@ set_seeds(SEED)
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--mlp_mode", choices=["sparse", "dense", "sparse_low_rank"], default="sparse_low_rank")
+    parser.add_argument("--grad_acc_steps", type=int, default=1)
+    parser.add_argument("--mlp_mode", choices=["sparse", "dense", "sparse_factored"], default="sparse_factored")
     parser.add_argument("--dataset", type=str, default="HuggingFaceFW/fineweb")
     parser.add_argument("--tokenizer", type=str, default="EleutherAI/FineWeb-restricted")
     parser.add_argument("--config", type=str, default="FineWeb-28M")
-    parser.add_argument("--num_epochs", type=int, default=200)
+    parser.add_argument("--num_epochs", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=128) # dense batch size 128, sparse batch size
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--b1", type=float, default=0.9)
@@ -50,11 +51,14 @@ class GenerationLoggerCallback(TrainerCallback):
         self.eval_dataset = eval_dataset
         self.log_interval = log_interval
 
+    @torch.inference_mode()
     def on_step_end(self, args, state, control, **kwargs):
+        if dist.get_rank() != 0:
+            return
+
         if state.global_step % self.log_interval == 0:
-            # Generate output
-            with torch.no_grad():
-                output = self.model.generate(max_length=50, do_sample=True)
+            prefix = self.tokenizer.encode("<EOS>", return_tensors="pt").to(self.model.device)
+            output = self.model.generate(prefix, max_length=50, do_sample=True)
             
             generated_text = self.tokenizer.decode(output[0], skip_special_tokens=True)
             print(f"Step {state.global_step}:")
@@ -70,7 +74,7 @@ def main():
 
     dataset = assert_type(
         DatasetDict,
-        load_dataset(args.dataset, name="sample-10BT" if args.dataset == "HuggingFaceFW/fineweb" else None)
+        load_dataset("HuggingFaceTB/smollm-corpus", "fineweb-edu-dedup")
     )
 
     processed_dataset = chunk_and_tokenize(
@@ -84,13 +88,16 @@ def main():
     processed_dataset = processed_dataset['train'].train_test_split(test_size=0.005, seed=SEED)
 
     # WandB run name
-    name = f"{args.mlp_mode} FineWeb10B-28M s={SEED}{' ' + args.tag if args.tag else ''}"
+    name = f"{args.mlp_mode} FineWeb-Edu s={SEED}{' ' + args.tag if args.tag else ''}"
     dir_path = Path("data") / args.dataset.replace('/', '--') / name.replace(" ", "-") / "checkpoints"
     if dir_path.exists():
         dir_path = dir_path.parent / f"{dir_path.stem} {datetime.datetime.now().strftime('%y-%m-%d')}"
  
     config = SparseGPTNeoXConfig(**MODEL_CONFIG[args.config], mlp_mode=args.mlp_mode)
     model = SparseGPTNeoXForCausalLM(config)
+    print(
+        f"Model parameters: {sum(p.numel() for p in model.parameters()):_}"
+    )
 
     training_args = TrainingArguments(
         adam_beta1=args.b1,
@@ -99,6 +106,7 @@ def main():
         dataloader_num_workers=8,
         ddp_find_unused_parameters=False,
         eval_strategy="epoch",     # evaluate at the end of each epoch
+        gradient_accumulation_steps=args.grad_acc_steps,
         learning_rate=args.lr,
         logging_dir="./logs",            # directory for TensorBoard logs
         logging_steps=100,

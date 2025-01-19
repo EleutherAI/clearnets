@@ -94,20 +94,145 @@ class SparseGPTNeoXPreTrainedModel(PreTrainedModel):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
-class SparseLowRankMLP(nn.Module):
+class KroneckerLinear(nn.Module):
+    """
+    A linear layer y = (A ⨂ B) x + b, with rectangular blocks B of shape
+    (block_in, block_out). This factorization implies:
+
+      - A: (out_blocks, in_blocks)
+      - B: (block_in, block_out)
+      => W = A ⨂ B has shape: (out_blocks * block_out,  in_blocks * block_in)
+
+    The input x must end in dimension (in_blocks * block_in),
+    and the output will end in dimension (out_blocks * block_out).
+
+    Leading dimensions in x (e.g., batch, time steps) are all preserved.
+    """
+
+    def __init__(
+        self,
+        in_blocks: int,
+        out_blocks: int,
+        block_in: int,
+        block_out: int,
+        bias: bool = True,
+    ):
+        super().__init__()
+        self.in_blocks = in_blocks
+        self.out_blocks = out_blocks
+        self.block_in = block_in
+        self.block_out = block_out
+
+        # Matrices for the Kronecker factors
+        # A: (out_blocks, in_blocks)
+        self.A = nn.Parameter(torch.empty(out_blocks, in_blocks))
+        # B: (block_out, block_in)
+        self.B = nn.Parameter(torch.empty(block_out, block_in))
+
+        # Optional bias of dimension (out_blocks * block_out,)
+        if bias:
+            self.bias = nn.Parameter(torch.empty(out_blocks * block_out))
+        else:
+            self.register_parameter('bias', None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        """
+        Mimic PyTorch's default nn.Linear initialization:
+          W ∼ Uniform(-1/√fan_in, 1/√fan_in)
+        by matching the variance so that each element of W (A⊗B)
+        has ~ the same second moment.
+
+        fan_in = in_blocks * block_in
+        fan_out = out_blocks * block_out
+        bound = 1 / sqrt(fan_in)
+
+        If A_{rc} and B_{kl} are i.i.d. Uniform(-α, α), then
+          Var(A_{rc} * B_{kl}) = (α^2/3) * (α^2/3) = α^4/9.
+        We want that to match the variance of Uniform(-bound, bound),
+          which is bound^2 / 3.
+        So:
+          α^4 / 9 = bound^2 / 3  =>  α^4 = 3 * bound^2
+          α^2 = sqrt(3) * bound  =>  α = sqrt( sqrt(3) * bound ).
+
+        We also initialize the bias with Uniform(-bound, bound).
+        """
+        import math
+    
+        fan_in = self.in_blocks * self.block_in
+        bound = 1.0 / math.sqrt(fan_in)  # PyTorch nn.Linear's default
+
+        alpha_sq = math.sqrt(3.0) * bound
+        alpha = math.sqrt(alpha_sq)
+
+        nn.init.uniform_(self.A, -alpha, alpha)
+        nn.init.uniform_(self.B, -alpha, alpha)
+
+        if self.bias is not None:
+            nn.init.uniform_(self.bias, -bound, bound)
+    
+    def weight(self):
+        return torch.kron(self.A, self.B)
+
+    # @torch.compile
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass:
+
+        x shape: (..., in_blocks*block_in)
+        output:  (..., out_blocks*block_out)
+        """
+        # Check shape
+        in_dim = x.shape[-1]
+        expected_in_dim = self.in_blocks * self.block_in
+        assert in_dim == expected_in_dim, (
+            f"KroneckerLinear forward: got input size {in_dim}, "
+            f"but expected {expected_in_dim} = in_blocks * block_in."
+        )
+
+        # Save leading dimensions
+        leading_shape = x.shape[:-1]
+
+        # 1) Reshape x => (..., in_blocks, block_in)
+        x_reshaped = x.reshape(*leading_shape, self.in_blocks, self.block_in)
+
+        # 2) Multiply by B (shape: [block_out, block_in]) on the last dimension:
+        #    x_reshaped: "... i j"
+        #    B:          "k j"
+        #    result:     "... i k"
+        z = torch.einsum('...ij,kj->...ik', x_reshaped, self.B)
+
+        # 3) Multiply by A (shape: [out_blocks, in_blocks]) on the 'i' dimension:
+        #    z: "... i k"
+        #    A: "o i"
+        #    result: "... o k"
+        z = torch.einsum('...ik,oi->...ok', z, self.A)
+
+        # 4) Flatten last two dims => (..., out_blocks*block_out)
+        out = z.reshape(*leading_shape, self.out_blocks * self.block_out)
+
+        # 5) Add bias if present
+        if self.bias is not None:
+            out = out + self.bias
+
+        return out
+
+class SparseFactoredMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.k = config.k
-        self.encoder = nn.Sequential(
-            nn.Linear(config.hidden_size, config.hidden_size // 8, bias=False),
-            nn.Linear(config.hidden_size // 8, config.intermediate_size * 8)
+        self.encoder = KroneckerLinear(
+            config.hidden_size // 4, config.intermediate_size * 8 // 2, 4, 2,
         )
-
-        self.decoder_down = nn.Linear(config.intermediate_size * 8, config.hidden_size // 8, bias=False)
-        self.decoder_up = nn.Linear(config.hidden_size // 8, config.hidden_size)
+        self.decoder = nn.Linear(config.intermediate_size * 8, config.hidden_size)
+        # self.decoder = KroneckerLinear(
+        #     config.intermediate_size * 8 // 2, config.hidden_size // 4, 2, 4,
+        # )
 
         self.act = ACT2FN[config.hidden_act]
 
+    @torch.compile
     def pre_acts(self, hidden_states):
         hidden_states = self.encoder(hidden_states)
         hidden_states = self.act(hidden_states)
@@ -118,14 +243,12 @@ class SparseLowRankMLP(nn.Module):
         shape = hidden_states.shape
         top_acts, top_indices = self.pre_acts(hidden_states)
 
-        low_rank_decoder = einops.einsum(self.decoder_down.weight, self.decoder_up.weight, "hi_8 in_8, hi hi_8 -> hi in_8")
-        
         y = decoder_impl(
             top_indices.view(-1, self.k).contiguous(), 
             top_acts.view(-1, self.k).contiguous().float(), 
-            low_rank_decoder.T.contiguous().T).reshape(*shape)
+            self.decoder.weight.T.contiguous().T).reshape(*shape)
 
-        hidden_states = y + self.decoder_up.bias
+        hidden_states = y + self.decoder.bias
 
         return {
             'hidden_states': hidden_states,
@@ -142,6 +265,7 @@ class SparseMLP(nn.Module):
         self.dense_4h_to_h = nn.Linear(config.intermediate_size * 8, config.hidden_size)
         self.act = ACT2FN[config.hidden_act]
 
+    @torch.compile
     def pre_acts(self, hidden_states):
         hidden_states = self.dense_h_to_4h(hidden_states)
         hidden_states = self.act(hidden_states)
@@ -191,8 +315,8 @@ class SparseGPTNeoXLayer(nn.Module):
             self.mlp = GPTNeoXMLP(config)
         elif config.mlp_mode == "sparse":
             self.mlp = SparseMLP(config)
-        elif config.mlp_mode == "sparse_low_rank":
-            self.mlp = SparseLowRankMLP(config)
+        elif config.mlp_mode == "sparse_factored":
+            self.mlp = SparseFactoredMLP(config)
 
     def forward(
         self,
@@ -225,6 +349,9 @@ class SparseGPTNeoXLayer(nn.Module):
             # pseudocode:
             # x = x + attn(ln1(x)) + mlp(ln2(x))
             mlp_output = self.mlp(self.post_attention_layernorm(hidden_states))
+            if isinstance(mlp_output, dict):
+                mlp_output = mlp_output['hidden_states']
+
             mlp_output = self.post_mlp_dropout(mlp_output)
             hidden_states = mlp_output + attn_output + hidden_states
         else:
