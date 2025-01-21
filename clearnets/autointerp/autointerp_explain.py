@@ -31,7 +31,7 @@ def main(args):
         for module in modules
     }
     dataset = FeatureDataset(
-        raw_dir=f"data/raw_features",
+        raw_dir=args.cache_config_dir,
         cfg=feature_cfg,
         modules=modules,
         features=feature_dict,
@@ -51,7 +51,8 @@ def main(args):
     client = Offline(
         "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
         max_memory=0.8,
-        max_model_len=5120,
+        max_model_len=2048,
+        num_gpus=8,
     )
 
     ### Build Explainer pipe ###
@@ -160,8 +161,9 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--shown_examples", type=int, default=5)
     parser.add_argument("--start_feature", type=int, default=0)
-    parser.add_argument("--model", type=str, default="gemma/16k")
-    parser.add_argument("--modules", nargs="+", default=[".model.layers.10"])
+    parser.add_argument("--cache_config_dir", type=str, default="/mnt/ssd-1/caleb/clearnets/cached_activations")
+    parser.add_argument("--model", type=str, default="/mnt/ssd-1/nora/sparse-run/HuggingFaceFW--fineweb/Sparse-FineWeb10B-28M-s=42/checkpoints/checkpoint-57280")
+    parser.add_argument("--modules", nargs="+", default=['.gpt_neox.layers.0.mlp', '.gpt_neox.layers.1.mlp', '.gpt_neox.layers.2.mlp', '.gpt_neox.layers.3.mlp'])
     parser.add_argument("--features", type=int, default=100)
     parser.add_argument("--experiment_name", type=str, default="default")
     parser.add_arguments(ExperimentConfig, dest="experiment_options")

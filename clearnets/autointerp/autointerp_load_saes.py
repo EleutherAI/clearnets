@@ -36,8 +36,7 @@ def load_eai_autoencoders(
 
     for layer in ae_layers:
         if module=="mlp":
-            # submodule = f"layers.{layer}.{module}"
-            submodule = f"transformer.h.{layer}.mlp"
+            submodule = f"gpt_neox.layers.{layer}"
         elif module=="res":
             submodule = f"layers.{layer}"
         
@@ -74,8 +73,7 @@ def load_eai_autoencoders(
             if module == "res":
                 submodule = model.gpt_neox.layers[layer]
             else:
-                submodule = model.transformer.h[layer].mlp
-                # submodule = model.gpt_neox.layers[layer].mlp
+                submodule = model.gpt_neox.layers[layer].mlp
         submodule.ae = AutoencoderLatents(
             sae, partial(_forward, sae, k), width=sae.encoder.weight.shape[0]
         )

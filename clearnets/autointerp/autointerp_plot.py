@@ -58,16 +58,17 @@ def build_df(path: Path):
     latent_type = []
     feature_idx = []
 
-    for type in ["SAE-8M", "Transcoder-8M", "Sparse-8M-last"]:
-        if type == "Sparse-8M-last":
-            dir_path = path / f"Sparse-TinyStories8M-s=42-full-vocab" / "default"
+    # for type in ["SAE-8M", "Transcoder-8M", "Sparse-8M-last"]:
+    for type in ["Sparse-28M-last"]:
+        if type == "Sparse-28M-last":
+            dir_path = path / f"Sparse-FineWeb10B-28M-s=42/checkpoints/checkpoint-57280" / "default"
         else:
             dir_path = path / f"Dense-TinyStories8M-s=42-full-vocab" / "default" # type.lower()
 
         for score_type in ["fuzz", "detection"]:
             for score_file in (dir_path / score_type).glob("*.txt"):
-                if not type in score_file.stem:
-                    continue
+                # if not type in score_file.stem:
+                #     continue
 
                 df = parse_score_file(score_file)
                 if df is None:
@@ -189,7 +190,7 @@ def plot_line(df):
 
 
 if __name__ == "__main__":
-    path = Path.cwd() / "results/scores/roneneldan--TinyStories"
+    path = Path.cwd() / "results/scores/mnt/ssd-1/nora/sparse-run/HuggingFaceFW--fineweb/"
     
     df = build_df(path)
     # plot(df)

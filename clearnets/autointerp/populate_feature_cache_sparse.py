@@ -12,9 +12,7 @@ from sae_auto_interp.features import FeatureCache
 from sae_auto_interp.utils import load_tokenized_data
 from typing import Any, Tuple, Dict
 
-from clearnets.train.sparse_gptneox import SparseGPTNeoForCausalLM
-from clearnets.train.sparse_gptneox_config import SparseGPTNeoConfig
-from clearnets.train.train_transformer import LightningWrapper, MODEL_CONFIG
+from clearnets.train.sparse_gptneox import SparseGPTNeoXForCausalLM
 
 def to_dense(
     top_acts: Tensor, top_indices: Tensor, num_latents: int, instance_dims=[0, 1]
@@ -50,29 +48,26 @@ def load_sparse_mlp_transformer_latents(
         Tuple[Dict[str, Any], Any]: A tuple containing the submodules dictionary and the edited model.
     """
     # This doesn't matter because we don't use the width
-    hook_to_d_in = resolve_widths(model, get_gptneo_hookpoints(model), torch.randint(0, 10000, (1, 1024)))
+    # hook_to_d_in = resolve_widths(model, get_gptneo_hookpoints(model), torch.randint(0, 10000, (1, 1024)))
 
     submodules = {}
 
-    for layer in range(len(model.transformer.h)):
+    for layer in range(len(model._model.gpt_neox.layers)):
         def _forward(x):
             return to_dense(x['top_acts'], x['top_indices'], num_latents=256 * 4 * 8) # hook_to_d_in[hookpoint])
             # return (x['top_indices'], x['top_acts'])
 
-        hookpoint = f"transformer.h.{layer}.mlp"
-        submodule = model.transformer.h[layer].mlp
+        # hookpoint = f"transformer.h.{layer}.mlp"
+        submodule = model._model.gpt_neox.layers[layer].mlp
         submodule.ae = AutoencoderLatents(
             None, _forward, width=256 * 4 * 8 # hook_to_d_in[hookpoint] # type: ignore
         )
-        submodules[submodule.path] = submodule
+        submodules[layer] = submodule
 
 
     with model.edit("") as edited:
-        for path, submodule in submodules.items():
-            if "embed" not in path and "mlp" not in path:
-                acts = submodule.output[0]
-            else:
-                acts = submodule.output
+        for _, submodule in submodules.items():
+            acts = submodule.output
             submodule.ae(acts, hook=True)
 
     return submodules, edited
@@ -124,20 +119,15 @@ def main(cfg: CacheConfig, args):
     save_dir = f"data/raw_features/{cfg.dataset_repo}/{features_name}"
     os.makedirs(save_dir, exist_ok=True)
     
-    tokenizer = AutoTokenizer.from_pretrained(args.dataset)
-
-    ckpt_pattern = f"data/{args.dataset.replace('/', '--')}/{args.model_ckpt}/checkpoints/{'last' if not args.epoch else f'epoch={args.epoch}-step=*'}.ckpt"
-    matching_ckpt = glob.glob(ckpt_pattern)[0]
-    model = LightningWrapper.load_from_checkpoint(
-        matching_ckpt,
-        model=SparseGPTNeoForCausalLM(SparseGPTNeoConfig(**MODEL_CONFIG[args.model_cfg], sparse_mlp=True)),
-        dense=False,
-        tokenizer=tokenizer
-    ).model
+    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/FineWeb-restricted")
+    model = SparseGPTNeoXForCausalLM.from_pretrained("/mnt/ssd-1/nora/sparse-run/HuggingFaceFW--fineweb/Sparse-FineWeb10B-28M-s=42/checkpoints/checkpoint-57280")
     model.to(device='cuda') # type: ignore
 
     # I believe dispatch won't work for tinystories models
     model = NNsight(model, device_map="auto", torch_dtype=torch.bfloat16, tokenizer=tokenizer) # dispatch=False
+
+    print("Loaded NNsight model")
+
     model.tokenizer = tokenizer
     submodule_dict, model = load_sparse_mlp_transformer_latents(model)
 
@@ -174,14 +164,11 @@ def save_features(cfg, model, submodule_dict, save_dir, args):
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_arguments(CacheConfig, dest="options")
-    parser.add_argument("--tokenizer_model", type=str, default="roneneldan/TinyStories-8M")
-    parser.add_argument("--model_ckpt", type=str, default="Sparse-TinyStories8M-s=42-full-vocab")
-    parser.add_argument("--model_cfg", type=str, default="roneneldan/TinyStories-8M")
-    parser.add_argument("--tag", type=str, default="Sparse-8M")
+    parser.add_argument("--tokenizer_model", type=str, default="Sparse FineWeb10B 28M s=42 step 54984")
+    parser.add_argument("--tag", type=str, default="Sparse-28M")
     
     # epoch=6-step=1456.ckpt has matched val loss with dense-8m-max-e=200-esp=15-s=42 epoch=21-step=1456.ckpt
-    parser.add_argument("--epoch", type=int) 
-    parser.add_argument("--dataset", type=str, default="roneneldan/TinyStories") 
+    parser.add_argument("--epoch", type=int, default="54984")
     args = parser.parse_args()
     cfg = args.options
     
