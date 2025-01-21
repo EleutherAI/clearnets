@@ -51,7 +51,7 @@ from transformers.models.gpt_neox.modeling_gpt_neox import (
     GPTNeoXRotaryEmbedding
 )
 
-from sae.utils import decoder_impl
+from .embedding_bag import xformers_embedding_bag
 
 logger = logging.get_logger(__name__)
 
@@ -117,43 +117,50 @@ class SparseFactoredMLP(nn.Module):
         num_keys1, num_keys2 = closest_factor_pair(total_keys)
 
         query_dim = config.hidden_size // 2
-        self.keys1 = nn.Parameter(torch.randn(num_keys1, query_dim))
-        self.keys2 = nn.Parameter(torch.randn(num_keys2, query_dim))
+        self.keys1 = nn.Linear(query_dim, num_keys1, bias=False)
+        self.keys2 = nn.Linear(query_dim, num_keys2, bias=False)
         self.key_bias = nn.Parameter(torch.zeros(total_keys))
-        
-        self.decoder = nn.Linear(config.intermediate_size * 8, config.hidden_size)
-        self.act = ACT2FN[config.hidden_act]
+
+        self.values = nn.Parameter(torch.empty(total_keys, config.hidden_size))
+        nn.init.orthogonal_(self.values)
+
+        # Offsets for GroupMax
+        self.register_buffer(
+            "offsets", torch.arange(0, total_keys, total_keys // self.k),
+        )
 
     @torch.compile(mode="max-autotune")
     def pre_acts(self, query):
         # Split queries in half, compute scores separately for each half
-        querys1, queries2 = query.chunk(2, dim=-1)
-        scores1 = querys1 @ self.keys1.mT
-        scores2 = queries2 @ self.keys2.mT
+        queries1, queries2 = query.chunk(2, dim=-1)
+        scores1 = self.keys1(queries1)
+        scores2 = self.keys2(queries2)
 
         # Add scores together and flatten
         scores = torch.flatten(
             scores1[..., None] + scores2[..., None, :], start_dim=-2, end_dim=-1,
         )
-        scores = self.act(scores + self.key_bias)
+        scores = nn.functional.relu(scores + self.key_bias)
 
         # Sparsify activations with GroupMax
-        return scores.unflatten(-1, (self.k, -1)).max(dim=-1)
+        values, indices = scores.unflatten(-1, (self.k, -1)).max(dim=-1)
+        indices = indices + self.offsets
+        return values, indices
         #return scores.topk(self.k, sorted=False)
 
-    def forward(self, hidden_states):
-        shape = hidden_states.shape
-        top_acts, top_indices = self.pre_acts(hidden_states)
+    def forward(self, x):
+        shape = x.shape
 
-        y = decoder_impl(
-            top_indices.view(-1, self.k).contiguous(), 
-            top_acts.view(-1, self.k).contiguous(),#.float(), 
-            self.decoder.weight.T.contiguous().T).reshape(*shape)
+        # Encoder
+        top_acts, top_indices = self.pre_acts(x)
 
-        hidden_states = y + self.decoder.bias
+        # Decoder
+        x = xformers_embedding_bag(
+            top_indices.reshape(-1, self.k), self.values, top_acts.reshape(-1, self.k),
+        ).reshape(*shape)
 
         return {
-            'hidden_states': hidden_states,
+            'hidden_states': x,
             'top_indices': top_indices,
             'top_acts': top_acts
         }
@@ -163,9 +170,14 @@ class SparseMLP(nn.Module):
         super().__init__()
         # Added topk parameter here
         self.k = config.k
-        self.dense_h_to_4h = nn.Linear(config.hidden_size, config.intermediate_size * 8)
-        self.dense_4h_to_h = nn.Linear(config.intermediate_size * 8, config.hidden_size)
+        total_keys = config.intermediate_size * 8
+
+        self.dense_h_to_4h = nn.Linear(config.hidden_size, total_keys)
+        self.dense_4h_to_h = nn.Linear(total_keys, config.hidden_size)
         self.act = ACT2FN[config.hidden_act]
+
+        self.values = nn.Parameter(torch.empty(total_keys, config.hidden_size))
+        nn.init.orthogonal_(self.values)
 
     @torch.compile(mode="max-autotune")
     def pre_acts(self, hidden_states):
@@ -177,15 +189,13 @@ class SparseMLP(nn.Module):
     def forward(self, hidden_states):
         shape = hidden_states.shape
         top_acts, top_indices = self.pre_acts(hidden_states)
-        y = decoder_impl(
-            top_indices.view(-1, self.k).contiguous(), 
-            top_acts.view(-1, self.k).contiguous(),
-            self.dense_4h_to_h.weight.T.contiguous().T).reshape(*shape)
-
-        hidden_states = y + self.dense_4h_to_h.bias
+        # Decoder
+        x = xformers_embedding_bag(
+            top_indices.reshape(-1, self.k), self.values, top_acts.reshape(-1, self.k),
+        ).reshape(*shape)
 
         return {
-            'hidden_states': hidden_states,
+            'hidden_states': x,
             'top_indices': top_indices,
             'top_acts': top_acts
         }
