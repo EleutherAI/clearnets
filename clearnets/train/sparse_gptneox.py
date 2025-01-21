@@ -14,9 +14,8 @@
 # limitations under the License.
 """PyTorch SparseGPTNeoX model."""
 
+import math
 from typing import Optional, Tuple, Union
-
-import einops
 
 import torch
 import torch.utils.checkpoint
@@ -94,150 +93,53 @@ class SparseGPTNeoXPreTrainedModel(PreTrainedModel):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
-class KroneckerLinear(nn.Module):
-    """
-    A linear layer y = (A ⨂ B) x + b, with rectangular blocks B of shape
-    (block_in, block_out). This factorization implies:
+def closest_factor_pair(N: int):
+    """Closest pair of factors for a given integer N."""
+    if N <= 0:
+        raise ValueError("N must be a positive integer.")
 
-      - A: (out_blocks, in_blocks)
-      - B: (block_in, block_out)
-      => W = A ⨂ B has shape: (out_blocks * block_out,  in_blocks * block_in)
-
-    The input x must end in dimension (in_blocks * block_in),
-    and the output will end in dimension (out_blocks * block_out).
-
-    Leading dimensions in x (e.g., batch, time steps) are all preserved.
-    """
-
-    def __init__(
-        self,
-        in_blocks: int,
-        out_blocks: int,
-        block_in: int,
-        block_out: int,
-        bias: bool = True,
-    ):
-        super().__init__()
-        self.in_blocks = in_blocks
-        self.out_blocks = out_blocks
-        self.block_in = block_in
-        self.block_out = block_out
-
-        # Matrices for the Kronecker factors
-        # A: (out_blocks, in_blocks)
-        self.A = nn.Parameter(torch.empty(out_blocks, in_blocks))
-        # B: (block_out, block_in)
-        self.B = nn.Parameter(torch.empty(block_out, block_in))
-
-        # Optional bias of dimension (out_blocks * block_out,)
-        if bias:
-            self.bias = nn.Parameter(torch.empty(out_blocks * block_out))
-        else:
-            self.register_parameter('bias', None)
-
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        """
-        Mimic PyTorch's default nn.Linear initialization:
-          W ∼ Uniform(-1/√fan_in, 1/√fan_in)
-        by matching the variance so that each element of W (A⊗B)
-        has ~ the same second moment.
-
-        fan_in = in_blocks * block_in
-        fan_out = out_blocks * block_out
-        bound = 1 / sqrt(fan_in)
-
-        If A_{rc} and B_{kl} are i.i.d. Uniform(-α, α), then
-          Var(A_{rc} * B_{kl}) = (α^2/3) * (α^2/3) = α^4/9.
-        We want that to match the variance of Uniform(-bound, bound),
-          which is bound^2 / 3.
-        So:
-          α^4 / 9 = bound^2 / 3  =>  α^4 = 3 * bound^2
-          α^2 = sqrt(3) * bound  =>  α = sqrt( sqrt(3) * bound ).
-
-        We also initialize the bias with Uniform(-bound, bound).
-        """
-        import math
+    # Start searching from sqrt(N) downward
+    sqrt_N = math.isqrt(N)
     
-        fan_in = self.in_blocks * self.block_in
-        bound = 1.0 / math.sqrt(fan_in)  # PyTorch nn.Linear's default
+    for a in range(sqrt_N, 0, -1):  # Iterate downward
+        if N % a == 0:
+            return (a, N // a)  # Return the closest pair
 
-        alpha_sq = math.sqrt(3.0) * bound
-        alpha = math.sqrt(alpha_sq)
-
-        nn.init.uniform_(self.A, -alpha, alpha)
-        nn.init.uniform_(self.B, -alpha, alpha)
-
-        if self.bias is not None:
-            nn.init.uniform_(self.bias, -bound, bound)
-    
-    def weight(self):
-        return torch.kron(self.A, self.B)
-
-    # @torch.compile
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass:
-
-        x shape: (..., in_blocks*block_in)
-        output:  (..., out_blocks*block_out)
-        """
-        # Check shape
-        in_dim = x.shape[-1]
-        expected_in_dim = self.in_blocks * self.block_in
-        assert in_dim == expected_in_dim, (
-            f"KroneckerLinear forward: got input size {in_dim}, "
-            f"but expected {expected_in_dim} = in_blocks * block_in."
-        )
-
-        # Save leading dimensions
-        leading_shape = x.shape[:-1]
-
-        # 1) Reshape x => (..., in_blocks, block_in)
-        x_reshaped = x.reshape(*leading_shape, self.in_blocks, self.block_in)
-
-        # 2) Multiply by B (shape: [block_out, block_in]) on the last dimension:
-        #    x_reshaped: "... i j"
-        #    B:          "k j"
-        #    result:     "... i k"
-        z = torch.einsum('...ij,kj->...ik', x_reshaped, self.B)
-
-        # 3) Multiply by A (shape: [out_blocks, in_blocks]) on the 'i' dimension:
-        #    z: "... i k"
-        #    A: "o i"
-        #    result: "... o k"
-        z = torch.einsum('...ik,oi->...ok', z, self.A)
-
-        # 4) Flatten last two dims => (..., out_blocks*block_out)
-        out = z.reshape(*leading_shape, self.out_blocks * self.block_out)
-
-        # 5) Add bias if present
-        if self.bias is not None:
-            out = out + self.bias
-
-        return out
+    return (1, N)  # Default case (should never reach here for positive N)
 
 class SparseFactoredMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.k = config.k
-        self.encoder = KroneckerLinear(
-            config.hidden_size // 4, config.intermediate_size * 8 // 2, 4, 2,
-        )
-        self.decoder = nn.Linear(config.intermediate_size * 8, config.hidden_size)
-        # self.decoder = KroneckerLinear(
-        #     config.intermediate_size * 8 // 2, config.hidden_size // 4, 2, 4,
-        # )
 
+        # Factorize the total number of keys into two close factors
+        total_keys = config.intermediate_size * 8
+        num_keys1, num_keys2 = closest_factor_pair(total_keys)
+
+        query_dim = config.hidden_size // 2
+        self.keys1 = nn.Parameter(torch.randn(num_keys1, query_dim))
+        self.keys2 = nn.Parameter(torch.randn(num_keys2, query_dim))
+        self.key_bias = nn.Parameter(torch.zeros(total_keys))
+        
+        self.decoder = nn.Linear(config.intermediate_size * 8, config.hidden_size)
         self.act = ACT2FN[config.hidden_act]
 
-    @torch.compile
-    def pre_acts(self, hidden_states):
-        hidden_states = self.encoder(hidden_states)
-        hidden_states = self.act(hidden_states)
+    @torch.compile(mode="max-autotune")
+    def pre_acts(self, query):
+        # Split queries in half, compute scores separately for each half
+        querys1, queries2 = query.chunk(2, dim=-1)
+        scores1 = querys1 @ self.keys1.mT
+        scores2 = queries2 @ self.keys2.mT
 
-        return hidden_states.topk(self.k, sorted=False)
+        # Add scores together and flatten
+        scores = torch.flatten(
+            scores1[..., None] + scores2[..., None, :], start_dim=-2, end_dim=-1,
+        )
+        scores = self.act(scores + self.key_bias)
+
+        # Sparsify activations with GroupMax
+        return scores.unflatten(-1, (self.k, -1)).max(dim=-1)
+        #return scores.topk(self.k, sorted=False)
 
     def forward(self, hidden_states):
         shape = hidden_states.shape
@@ -245,7 +147,7 @@ class SparseFactoredMLP(nn.Module):
 
         y = decoder_impl(
             top_indices.view(-1, self.k).contiguous(), 
-            top_acts.view(-1, self.k).contiguous().float(), 
+            top_acts.view(-1, self.k).contiguous(),#.float(), 
             self.decoder.weight.T.contiguous().T).reshape(*shape)
 
         hidden_states = y + self.decoder.bias
@@ -265,7 +167,7 @@ class SparseMLP(nn.Module):
         self.dense_4h_to_h = nn.Linear(config.intermediate_size * 8, config.hidden_size)
         self.act = ACT2FN[config.hidden_act]
 
-    @torch.compile
+    @torch.compile(mode="max-autotune")
     def pre_acts(self, hidden_states):
         hidden_states = self.dense_h_to_4h(hidden_states)
         hidden_states = self.act(hidden_states)
@@ -277,7 +179,7 @@ class SparseMLP(nn.Module):
         top_acts, top_indices = self.pre_acts(hidden_states)
         y = decoder_impl(
             top_indices.view(-1, self.k).contiguous(), 
-            top_acts.view(-1, self.k).contiguous().float(), 
+            top_acts.view(-1, self.k).contiguous(),
             self.dense_4h_to_h.weight.T.contiguous().T).reshape(*shape)
 
         hidden_states = y + self.dense_4h_to_h.bias
@@ -295,6 +197,7 @@ class GPTNeoXMLP(nn.Module):
         self.dense_4h_to_h = nn.Linear(config.intermediate_size, config.hidden_size)
         self.act = ACT2FN[config.hidden_act]
 
+    @torch.compile(mode="max-autotune")
     def forward(self, hidden_states):
         hidden_states = self.dense_h_to_4h(hidden_states)
         hidden_states = self.act(hidden_states)

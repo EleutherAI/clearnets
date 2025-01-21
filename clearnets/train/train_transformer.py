@@ -26,7 +26,7 @@ def parse_args():
     parser.add_argument("--grad_acc_steps", type=int, default=1)
     parser.add_argument("--mlp_mode", choices=["sparse", "dense", "sparse_factored"], default="sparse_factored")
     parser.add_argument("--dataset", type=str, default="HuggingFaceFW/fineweb")
-    parser.add_argument("--tokenizer", type=str, default="EleutherAI/FineWeb-restricted")
+    parser.add_argument("--tokenizer", type=str, default="HuggingFaceTB/SmolLM-135M")
     parser.add_argument("--config", type=str, default="FineWeb-28M")
     parser.add_argument("--num_epochs", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=128) # dense batch size 128, sparse batch size
@@ -110,6 +110,7 @@ def main():
         learning_rate=args.lr,
         logging_dir="./logs",            # directory for TensorBoard logs
         logging_steps=100,
+        lr_scheduler_type="constant",
         num_train_epochs=args.num_epochs,              # number of epochs
         optim="schedule_free_adamw",
         output_dir=dir_path,
