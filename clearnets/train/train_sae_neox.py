@@ -16,7 +16,7 @@ def parse_args():
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--distribute_modules", action="store_true")
     parser.add_argument("--transcode", action="store_true")
-    parser.add_argument("--batch_size", type=int, default=1024)
+    parser.add_argument("--batch_size", type=int, default=784)
     return parser.parse_args()
 
 def main():
@@ -30,19 +30,18 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained("EleutherAI/FineWeb-restricted")
     model = SparseGPTNeoXForCausalLM.from_pretrained(
-        "/mnt/ssd-1/caleb/clearnets/Dense-FineWeb10B-28M-s=42/checkpoints/checkpoint-54984",
+        "/mnt/ssd-1/nora/dense-ckpts/checkpoint-118000",
         device_map={"": f"cuda:{rank}"},
         torch_dtype=torch.bfloat16
     )
-    # model = SparseGPTNeoXForCausalLM.from_pretrained("/mnt/ssd-1/nora/sparse-run/HuggingFaceFW--fineweb/Sparse-FineWeb10B-28M-s=42/checkpoints/checkpoint-57280")
     
-    wandb_name = "Sparse FineWeb10B 28M s=42 step 54984"
+    wandb_name = "Sparse FineWebEduDeduped 58M s=42 step 118000"
 
     if args.transcode:
         wandb_name += " transcode"
 
-    dataset = load_dataset("HuggingFaceFW/FineWeb", name="sample-10BT", num_proc=64)
-    dataset = chunk_and_tokenize(dataset["train"], tokenizer, max_seq_len=512)
+    dataset = load_dataset("EleutherAI/fineweb-edu-dedup-10b", split="train", cache_dir="/mnt/ssd-1/caleb/hf_cache", num_proc=64)
+    dataset = chunk_and_tokenize(dataset, tokenizer, max_seq_len=512, text_key="text")
     dataset = dataset.shard(dist.get_world_size(), rank)
 
     cfg = TrainConfig(
