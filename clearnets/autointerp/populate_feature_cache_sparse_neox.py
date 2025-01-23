@@ -33,11 +33,7 @@ def parse_args():
     parser = ArgumentParser()
     parser.add_arguments(CacheConfig, dest="options")
     parser.add_argument("--tokenizer_model", type=str, default="EleutherAI/FineWeb-restricted")
-    parser.add_argument("--model_ckpt", type=str, default="/mnt/ssd-1/nora/sparse-run/HuggingFaceFW--fineweb/Sparse-FineWeb10B-28M-s=42/checkpoints/checkpoint-57280")
-    
-    # epoch=6-step=1456.ckpt has matched val loss with dense-8m-max-e=200-esp=15-s=42 epoch=21-step=1456.ckpt
-    parser.add_argument("--epoch", type=int) 
-    parser.add_argument("--dataset", type=str, default="roneneldan/TinyStories") 
+    parser.add_argument("--model_ckpt", type=str, default="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sparse-checkpoint-164000")
     args = parser.parse_args()
     cfg = args.options
 
@@ -55,12 +51,13 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_model)
     model = SparseGPTNeoXForCausalLM.from_pretrained(
         args.model_ckpt,
-        device_map={"": f"cuda:{rank}"},
         config=SparseGPTNeoXConfig(
-            mlp_mode="sparse"
-        )
+            mlp_mode="sparse",
+            hidden_size=512,
+        ),
+        device_map={"": f"cuda:{rank}"},
     )
-    
+
     model = NNsight(model, device_map="auto", torch_dtype=torch.bfloat16, tokenizer=tokenizer)
     model.tokenizer = tokenizer
 
@@ -68,11 +65,11 @@ def main():
 
     for layer in range(len(model.gpt_neox.layers)):
         def _forward(x):
-            return to_dense(x['top_acts'], x['top_indices'], num_latents=512 * 8)
+            return to_dense(x['top_acts'], x['top_indices'], num_latents=768 * 4 * 8)
 
         submodule = model.gpt_neox.layers[layer].mlp
         submodule.ae = AutoencoderLatents(
-            None, _forward, width=512 * 8 # change to 768 * 4 * 8 in the future
+            None, _forward, width=768 * 4 * 8
         )
         submodule_dict[submodule.path] = submodule
     
@@ -84,8 +81,7 @@ def main():
     tokens = load_tokenized_data(
             ctx_len=512,
             tokenizer=tokenizer,
-            dataset_repo="HuggingFaceFW/FineWeb",
-            dataset_name="sample-10BT",
+            dataset_repo="EleutherAI/fineweb-edu-dedup-10b",
             dataset_split="train[:1%]",
             dataset_row="text"
     )
@@ -93,12 +89,12 @@ def main():
     cache = FeatureCache(
         edited,
         submodule_dict,
-        batch_size = 256,
+        batch_size = 48,
     )
 
     cache.run(n_tokens = 10_000_000, tokens=tokens)
 
-    save_dir = "/mnt/ssd-1/caleb/clearnets/cached_activations/"
+    save_dir = "/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/cached_activations/"
 
     cache.save_splits(
         n_splits=cfg.n_splits, 

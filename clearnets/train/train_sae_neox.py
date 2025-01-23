@@ -17,6 +17,7 @@ def parse_args():
     parser.add_argument("--distribute_modules", action="store_true")
     parser.add_argument("--transcode", action="store_true")
     parser.add_argument("--batch_size", type=int, default=784)
+    parser.add_argument("--run_name", type=str, default="sae-ckpts")
     return parser.parse_args()
 
 def main():
@@ -35,22 +36,22 @@ def main():
         torch_dtype=torch.bfloat16
     )
     
-    wandb_name = "Sparse FineWebEduDeduped 58M s=42 step 118000"
+    wandb_name = "Dense-FineWebEduDedup-58M-s=42"
 
     if args.transcode:
-        wandb_name += " transcode"
+        wandb_name += "/transcoder"
 
-    dataset = load_dataset("EleutherAI/fineweb-edu-dedup-10b", split="train", cache_dir="/mnt/ssd-1/caleb/hf_cache", num_proc=64)
+    dataset = load_dataset("EleutherAI/fineweb-edu-dedup-10b", split="train", cache_dir="/mnt/ssd-1/caleb/hf_cache")
     dataset = chunk_and_tokenize(dataset, tokenizer, max_seq_len=512, text_key="text")
     dataset = dataset.shard(dist.get_world_size(), rank)
 
     cfg = TrainConfig(
         SaeConfig(expansion_factor=8, k=32),
         batch_size=args.batch_size,
-        run_name=str(Path('sae') / wandb_name),
+        run_name=str(Path('/mnt/ssd-1/caleb/clearnets') / wandb_name),
         log_to_wandb=False,
         transcode=args.transcode,
-        distribute_modules=args.distribute_modules
+        distribute_modules=args.distribute_modules,
     )
     trainer = SaeTrainer(cfg, dataset, model)
     trainer.fit()
