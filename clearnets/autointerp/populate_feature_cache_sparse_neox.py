@@ -7,10 +7,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
-from safetensors.torch import save_file
-
 from clearnets.train.sparse_gptneox import SparseGPTNeoXForCausalLM
-from clearnets.train.sparse_gptneox_config import SparseGPTNeoXConfig
 
 from sae_auto_interp.utils import load_tokenized_data
 from sae_auto_interp.features import FeatureCache
@@ -51,10 +48,6 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_model)
     model = SparseGPTNeoXForCausalLM.from_pretrained(
         args.model_ckpt,
-        config=SparseGPTNeoXConfig(
-            mlp_mode="sparse",
-            hidden_size=512,
-        ),
         device_map={"": f"cuda:{rank}"},
     )
 
@@ -65,11 +58,11 @@ def main():
 
     for layer in range(len(model.gpt_neox.layers)):
         def _forward(x):
-            return to_dense(x['top_acts'], x['top_indices'], num_latents=768 * 4 * 8)
+            return to_dense(x['top_acts'], x['top_indices'], num_latents=512 * 4 * 8)
 
         submodule = model.gpt_neox.layers[layer].mlp
         submodule.ae = AutoencoderLatents(
-            None, _forward, width=768 * 4 * 8
+            None, _forward, width=512 * 4 * 8
         )
         submodule_dict[submodule.path] = submodule
     
@@ -94,7 +87,7 @@ def main():
 
     cache.run(n_tokens = 10_000_000, tokens=tokens)
 
-    save_dir = "/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/cached_activations/"
+    save_dir = "/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/cached_activations/sparse"
 
     cache.save_splits(
         n_splits=cfg.n_splits, 

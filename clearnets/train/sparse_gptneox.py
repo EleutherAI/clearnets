@@ -17,6 +17,7 @@
 from typing import Optional, Tuple, Union
 
 import einops
+import math
 
 import torch
 import torch.utils.checkpoint
@@ -53,6 +54,7 @@ from transformers.models.gpt_neox.modeling_gpt_neox import (
 )
 
 from sae.utils import decoder_impl
+from clearnets.train.xformer_embeddingbag import xformers_embedding_bag
 
 logger = logging.get_logger(__name__)
 
@@ -138,31 +140,41 @@ class SparseMLP(nn.Module):
         super().__init__()
         # Added topk parameter here
         self.k = config.k
-        self.dense_h_to_4h = nn.Linear(config.hidden_size, config.intermediate_size * 8)
-        self.dense_4h_to_h = nn.Linear(config.intermediate_size * 8, config.hidden_size)
+        total_keys = config.intermediate_size * 8
+
+        self.dense_h_to_4h = nn.Linear(config.hidden_size, total_keys)
         self.act = ACT2FN[config.hidden_act]
 
-    def pre_acts(self, hidden_states):
-        hidden_states = self.dense_h_to_4h(hidden_states)
-        hidden_states = self.act(hidden_states)
+        self.values = nn.Parameter(torch.empty(total_keys, config.hidden_size))
+        nn.init.kaiming_uniform_(self.values, a=math.sqrt(5))
 
-        return hidden_states.topk(self.k, sorted=False)
+        # Offsets for GroupMax
+        self.register_buffer(
+            "offsets", torch.arange(0, total_keys, total_keys // self.k),
+        )
+
+    def pre_acts(self, x):
+        x = self.dense_h_to_4h(x)
+        x = nn.functional.relu(x)
+
+        values, indices = x.unflatten(-1, (self.k, -1)).max(dim=-1)
+        return values, indices + self.offsets
 
     def forward(self, hidden_states):
         shape = hidden_states.shape
         top_acts, top_indices = self.pre_acts(hidden_states)
-        y = decoder_impl(
-            top_indices.view(-1, self.k).contiguous(), 
-            top_acts.view(-1, self.k).contiguous().float(), 
-            self.dense_4h_to_h.weight.T.contiguous().T).reshape(*shape)
 
-        hidden_states = y + self.dense_4h_to_h.bias
+        # Decoder
+        x = xformers_embedding_bag(
+            top_indices.reshape(-1, self.k), self.values, top_acts.reshape(-1, self.k),
+        ).reshape(*shape)
 
         return {
-            'hidden_states': hidden_states,
+            'hidden_states': x,
             'top_indices': top_indices,
             'top_acts': top_acts
         }
+
 
 class GPTNeoXMLP(nn.Module):
     def __init__(self, config):
@@ -193,6 +205,8 @@ class SparseGPTNeoXLayer(nn.Module):
             self.mlp = SparseMLP(config)
         elif config.mlp_mode == "sparse_low_rank":
             self.mlp = SparseLowRankMLP(config)
+        # elif config.mlp_mode == "sparse_group_max":
+        #     self.mlp = SparseGroupMaxMLP(config)
 
     def forward(
         self,

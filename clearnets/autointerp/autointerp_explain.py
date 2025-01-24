@@ -59,12 +59,12 @@ def main(args):
     def explainer_postprocess(result):
 
         safe_feature_name = str(result.record.feature).replace("/", "--")
-        with open(f"results/explanations/{sae_model}/{experiment_name}/{safe_feature_name}.txt", "wb") as f: f.write(orjson.dumps(result.explanation))
+        with open(f"{args.results_dir}/explanations/{sae_model}/{experiment_name}/{safe_feature_name}.txt", "wb") as f: f.write(orjson.dumps(result.explanation))
 
         return result
 
     # try making the directory if it doesn't exist
-    os.makedirs(f"results/explanations/{sae_model}/{experiment_name}", exist_ok=True)
+    os.makedirs(f"{args.results_dir}/explanations/{sae_model}/{experiment_name}", exist_ok=True)
 
     explainer_pipe = process_wrapper(
         DefaultExplainer(
@@ -77,7 +77,7 @@ def main(args):
 
     # save the experiment config
     with open(
-        f"results/explanations/{sae_model}/{experiment_name}/experiment_config.json",
+        f"{args.results_dir}/explanations/{sae_model}/{experiment_name}/experiment_config.json",
         "w",
     ) as f:
         print(experiment_cfg.to_dict())
@@ -96,25 +96,25 @@ def main(args):
         record = result.record
         safe_feature_name = str(record.feature).replace("/", "--")
         with open(
-            f"results/scores/{sae_model}/{experiment_name}/{score_dir}/{safe_feature_name}.txt",
+            f"{args.results_dir}/scores/{sae_model}/{experiment_name}/{score_dir}/{safe_feature_name}.txt",
             "wb",
         ) as f:
             f.write(orjson.dumps(result.score))
 
     os.makedirs(
-        f"results/scores/{sae_model}/{experiment_name}/detection", exist_ok=True
+        f"{args.results_dir}/scores/{sae_model}/{experiment_name}/detection", exist_ok=True
     )
-    os.makedirs(f"results/scores/{sae_model}/{experiment_name}/fuzz", exist_ok=True)
+    os.makedirs(f"{args.results_dir}/scores/{sae_model}/{experiment_name}/fuzz", exist_ok=True)
 
     # save the experiment config
     with open(
-        f"results/scores/{sae_model}/{experiment_name}/detection/experiment_config.json",
+        f"{args.results_dir}/scores/{sae_model}/{experiment_name}/detection/experiment_config.json",
         "w",
     ) as f:
         f.write(json.dumps(experiment_cfg.to_dict()))
 
     with open(
-        f"results/scores/{sae_model}/{experiment_name}/fuzz/experiment_config.json", "w"
+        f"{args.results_dir}/scores/{sae_model}/{experiment_name}/fuzz/experiment_config.json", "w"
     ) as f:
         f.write(json.dumps(experiment_cfg.to_dict()))
 
@@ -161,9 +161,10 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--shown_examples", type=int, default=5)
     parser.add_argument("--start_feature", type=int, default=0)
-    parser.add_argument("--cache_config_dir", type=str, default="/mnt/ssd-1/caleb/clearnets/cached_activations")
-    parser.add_argument("--model", type=str, default="/mnt/ssd-1/nora/sparse-run/HuggingFaceFW--fineweb/Sparse-FineWeb10B-28M-s=42/checkpoints/checkpoint-57280")
-    parser.add_argument("--modules", nargs="+", default=['.gpt_neox.layers.0.mlp', '.gpt_neox.layers.1.mlp', '.gpt_neox.layers.2.mlp', '.gpt_neox.layers.3.mlp'])
+    parser.add_argument("--cache_config_dir", type=str, default="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/cached_activations/sparse")
+    parser.add_argument("--model", type=str, default="sparse")
+    parser.add_argument("--results_dir", type=str, default="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/results")
+    parser.add_argument("--modules", nargs="+", default=[f'.gpt_neox.layers.{i}.mlp' for i in range(15)])
     parser.add_argument("--features", type=int, default=100)
     parser.add_argument("--experiment_name", type=str, default="default")
     parser.add_arguments(ExperimentConfig, dest="experiment_options")

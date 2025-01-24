@@ -16,7 +16,7 @@ def parse_args():
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--distribute_modules", action="store_true")
     parser.add_argument("--transcode", action="store_true")
-    parser.add_argument("--batch_size", type=int, default=784)
+    parser.add_argument("--batch_size", type=int, default=448)
     parser.add_argument("--run_name", type=str, default="sae-ckpts")
     return parser.parse_args()
 
@@ -40,16 +40,18 @@ def main():
 
     if args.transcode:
         wandb_name += "/transcoder"
+    else:
+        wandb_name += "/sae"
 
     dataset = load_dataset("EleutherAI/fineweb-edu-dedup-10b", split="train", cache_dir="/mnt/ssd-1/caleb/hf_cache")
     dataset = chunk_and_tokenize(dataset, tokenizer, max_seq_len=512, text_key="text")
     dataset = dataset.shard(dist.get_world_size(), rank)
 
     cfg = TrainConfig(
-        SaeConfig(expansion_factor=8, k=32),
+        SaeConfig(expansion_factor=32, k=32),
         batch_size=args.batch_size,
         run_name=str(Path('/mnt/ssd-1/caleb/clearnets') / wandb_name),
-        log_to_wandb=False,
+        log_to_wandb=True,
         transcode=args.transcode,
         distribute_modules=args.distribute_modules,
     )
