@@ -49,9 +49,9 @@ def main(args):
     ### Load client ###
 
     client = Offline(
-        "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
-        max_memory=0.8,
-        max_model_len=2048,
+        "hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4",
+        max_memory=0.9,
+        max_model_len=3084,
         num_gpus=8,
     )
 
@@ -162,10 +162,11 @@ if __name__ == "__main__":
     parser.add_argument("--shown_examples", type=int, default=5)
     parser.add_argument("--start_feature", type=int, default=0)
     parser.add_argument("--cache_config_dir", type=str, default="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/cached_activations/sparse")
-    parser.add_argument("--model", type=str, default="sparse")
+    parser.add_argument("--model", type=str, default="sparse_4")
     parser.add_argument("--results_dir", type=str, default="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/results")
-    parser.add_argument("--modules", nargs="+", default=[f'.gpt_neox.layers.{i}.mlp' for i in range(15)])
-    parser.add_argument("--features", type=int, default=100)
+    # parser.add_argument("--modules", nargs="+", default=[f'.gpt_neox.layers.{i}.mlp' for i in range(15)])
+    parser.add_argument("--modules", nargs="+", default=['.gpt_neox.layers.8.mlp'])
+    parser.add_argument("--features", type=int, default=16384)
     parser.add_argument("--experiment_name", type=str, default="default")
     parser.add_arguments(ExperimentConfig, dest="experiment_options")
     parser.add_arguments(FeatureConfig, dest="feature_options")
