@@ -62,7 +62,7 @@ def main():
 
         submodule = model.gpt_neox.layers[layer].mlp
         submodule.ae = AutoencoderLatents(
-            None, _forward, width=512 * 4 * 8
+            None, _forward, width=512 * 4 * 8, hookpoint=""
         )
         submodule_dict[submodule.path] = submodule
     
@@ -76,7 +76,7 @@ def main():
             tokenizer=tokenizer,
             dataset_repo="EleutherAI/fineweb-edu-dedup-10b",
             dataset_split="train[:1%]",
-            dataset_row="text"
+            column_name="text"
     )
 
     cache = FeatureCache(
