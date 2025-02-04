@@ -7,6 +7,7 @@ import orjson
 import torch
 import time
 from simple_parsing import ArgumentParser
+from transformers import AutoTokenizer
 
 from sae_auto_interp.clients import Offline
 from sae_auto_interp.config import ExperimentConfig, FeatureConfig
@@ -35,15 +36,17 @@ def main(args):
         cfg=feature_cfg,
         modules=modules,
         features=feature_dict,
+        tokenizer=AutoTokenizer.from_pretrained("EleutherAI/FineWeb-restricted"),
     )
 
     constructor = partial(
         default_constructor,
-        tokens=dataset.tokens,
+        token_loader=None,
         n_random=experiment_cfg.n_random,
         ctx_len=experiment_cfg.example_ctx_len,
         max_examples=feature_cfg.max_examples,
     )
+
     sampler = partial(sample, cfg=experiment_cfg)
     loader = FeatureLoader(dataset, constructor=constructor, sampler=sampler)
     ### Load client ###
@@ -162,11 +165,11 @@ if __name__ == "__main__":
     parser.add_argument("--shown_examples", type=int, default=5)
     parser.add_argument("--start_feature", type=int, default=0)
     parser.add_argument("--cache_config_dir", type=str, default="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/cached_activations/sparse")
-    parser.add_argument("--model", type=str, default="sparse_4")
+    parser.add_argument("--model", type=str, default="sparse_8")
     parser.add_argument("--results_dir", type=str, default="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/results")
-    # parser.add_argument("--modules", nargs="+", default=[f'.gpt_neox.layers.{i}.mlp' for i in range(15)])
+    # parser.add_argument("--modules", nargs="+", default=[f'.gpt_neox.layers.{i}.mlp' for i in range(2, 15)])
     parser.add_argument("--modules", nargs="+", default=['.gpt_neox.layers.8.mlp'])
-    parser.add_argument("--features", type=int, default=16384)
+    parser.add_argument("--features", type=int, default=100)
     parser.add_argument("--experiment_name", type=str, default="default")
     parser.add_arguments(ExperimentConfig, dest="experiment_options")
     parser.add_arguments(FeatureConfig, dest="feature_options")

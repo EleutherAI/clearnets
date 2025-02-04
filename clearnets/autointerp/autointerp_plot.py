@@ -58,7 +58,7 @@ def build_df(path: Path):
     latent_type = []
     feature_idx = []
 
-    for type in ["sae", "transcoder"]:
+    for type in ["sae_10", "sparse_6"]:
         dir_path = path / type / "default"
 
         for score_type in ["fuzz", "detection"]:
