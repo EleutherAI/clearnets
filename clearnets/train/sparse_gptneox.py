@@ -53,7 +53,7 @@ from transformers.models.gpt_neox.modeling_gpt_neox import (
     GPTNeoXRotaryEmbedding
 )
 
-from sae.utils import decoder_impl
+from sparsify.utils import decoder_impl
 from clearnets.train.xformer_embeddingbag import xformers_embedding_bag
 
 logger = logging.get_logger(__name__)

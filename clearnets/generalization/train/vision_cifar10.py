@@ -19,10 +19,10 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 import lovely_tensors as lt
 from datasets import Dataset as HfDataset
-from sae.sae import Sae
-from sae.config import SaeConfig, TrainConfig
-from sae.trainer import SaeTrainer
-# from sae import SaeConfig, SaeTrainer, TrainConfig
+from sparsify.sae import Sae
+from sparsify.config import SaeConfig, TrainConfig
+from sparsify.trainer import SaeTrainer
+# from sparsify import SaeConfig, SaeTrainer, TrainConfig
 from nnsight import NNsight
 
 from clearnets.utils import set_seeds

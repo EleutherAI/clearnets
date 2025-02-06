@@ -11,7 +11,7 @@ from torchvision import transforms
 from torch.utils.data import DataLoader
 from transformers import ViTForImageClassification, ViTConfig
 from datasets import Dataset as HfDataset, load_dataset
-from sae import SaeConfig, SaeTrainer, TrainConfig
+from sparsify import SaeConfig, SaeTrainer, TrainConfig
 from tqdm import tqdm
 import lovely_tensors as lt
 

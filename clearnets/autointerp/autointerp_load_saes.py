@@ -2,9 +2,9 @@ from functools import partial
 from typing import List, Any, Tuple, Optional, Dict
 
 import torch
-from sae.sae import Sae
-from sae_auto_interp.autoencoders.OpenAI.model import ACTIVATIONS_CLASSES, TopK
-from sae_auto_interp.autoencoders.wrapper import AutoencoderLatents
+from sparsify.sae import Sae
+from delphi.autoencoders.OpenAI.model import ACTIVATIONS_CLASSES, TopK
+from delphi.autoencoders.wrapper import AutoencoderLatents
 
 
 def load_eai_autoencoders(

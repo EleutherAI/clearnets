@@ -4,7 +4,7 @@ import datetime
 import os
 
 from datasets import load_dataset, DatasetDict
-from sae.data import chunk_and_tokenize
+from sparsify.data import chunk_and_tokenize
 from transformers import AutoTokenizer, DataCollatorForLanguageModeling, Trainer, TrainingArguments, TrainerCallback, GPTNeoXTokenizerFast
 import torch
 import torch.distributed as dist

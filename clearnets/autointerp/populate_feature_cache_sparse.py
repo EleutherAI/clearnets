@@ -6,10 +6,10 @@ from simple_parsing import ArgumentParser
 import torch
 from torch import Tensor
 from transformers import AutoTokenizer
-from sae_auto_interp.config import CacheConfig
-from sae_auto_interp.autoencoders.wrapper import AutoencoderLatents
-from sae_auto_interp.features import FeatureCache
-from sae_auto_interp.utils import load_tokenized_data
+from delphi.config import CacheConfig
+from delphi.autoencoders.wrapper import AutoencoderLatents
+from delphi.features import FeatureCache
+from delphi.utils import load_tokenized_data
 from typing import Any, Tuple, Dict
 
 from clearnets.train.sparse_gptneox import SparseGPTNeoXForCausalLM

@@ -16,7 +16,7 @@ import torch.nn.functional as F
 import lovely_tensors as lt
 
 from safetensors.torch import load_model
-from sae import SaeConfig, SaeTrainer, TrainConfig
+from sparsify import SaeConfig, SaeTrainer, TrainConfig
 from datasets import Dataset as HfDataset
 
 from clearnets.utils.utils import assert_type

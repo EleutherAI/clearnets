@@ -1,11 +1,11 @@
 import os
 from pathlib import Path
-from sae.config import SaeConfig, TrainConfig
-from sae.trainer import SaeTrainer
+from sparsify.config import SaeConfig, TrainConfig
+from sparsify.trainer import SaeTrainer
 from argparse import ArgumentParser
 from transformers import AutoTokenizer
 from datasets import load_dataset
-from sae.data import chunk_and_tokenize
+from sparsify.data import chunk_and_tokenize
 import torch
 import torch.distributed as dist
 

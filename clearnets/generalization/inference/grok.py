@@ -8,10 +8,10 @@ import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer
 from nnsight import LanguageModel
-# from sae import SaeConfig, Sae, TrainConfig, SaeTrainer
-from sae.trainer import SaeTrainer
-from sae.sae import Sae
-from sae.config import SaeConfig, TrainConfig
+# from sparsify import SaeConfig, Sae, TrainConfig, SaeTrainer
+from sparsify.trainer import SaeTrainer
+from sparsify.sae import Sae
+from sparsify.config import SaeConfig, TrainConfig
 from datasets import Dataset as HfDataset
 import lovely_tensors as lt
 

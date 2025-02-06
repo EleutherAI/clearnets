@@ -2,16 +2,16 @@ import os
 from nnsight import NNsight
 from simple_parsing import ArgumentParser
 from transformers import AutoTokenizer
-from sae_auto_interp.autoencoders.wrapper import AutoencoderLatents
+from delphi.autoencoders.wrapper import AutoencoderLatents
 import numpy as np
 import torch
 import torch.distributed as dist
 
 from clearnets.train.sparse_gptneox import SparseGPTNeoXForCausalLM
 
-from sae_auto_interp.utils import load_tokenized_data
-from sae_auto_interp.features import FeatureCache
-from sae_auto_interp.config import CacheConfig
+from delphi.utils import load_tokenized_data
+from delphi.features import FeatureCache
+from delphi.config import CacheConfig
 
 def to_dense(
     top_acts: torch.Tensor, top_indices: torch.Tensor, num_latents: int, instance_dims=[0, 1]

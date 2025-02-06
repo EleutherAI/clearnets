@@ -3,13 +3,12 @@ import os
 from nnsight import NNsight
 from simple_parsing import ArgumentParser
 import torch
-from sae_auto_interp.config import CacheConfig
+from delphi.config import CacheConfig
 from transformers import AutoTokenizer
 
 from clearnets.autointerp.autointerp_load_saes import load_eai_autoencoders
 from clearnets.autointerp.populate_feature_cache_sparse import save_features
 from clearnets.train.sparse_gptneox import SparseGPTNeoXForCausalLM
-from clearnets.train.sparse_gptneox_config import SparseGPTNeoXConfig
 
 
 def load_artifacts(ckpt_path: str, sae_dir):
