@@ -6,25 +6,29 @@ import asyncio
 import time
 import plotly.express as px
 
-
-from nnsight import LanguageModel
+from transformers import AutoConfig
 from dataclasses import dataclass
 from simple_parsing import field
 from delphi.config import ExperimentConfig, LatentConfig, CacheConfig
-from delphi.log.result_analysis import build_scores_df, feature_balanced_score_metrics
+from delphi.log.result_analysis import build_scores_df, latent_balanced_score_metrics
 from delphi.__main__ import RunConfig, process_cache, populate_cache
-from delphi.autoencoders.eleuther import load_and_hook_sparsify_models
+from delphi.sparse_coders import load_sparsify_sparse_coders
 from transformers import BitsAndBytesConfig, AutoTokenizer
 
 from clearnets.train.sparse_gptneox import SparseGPTNeoXForCausalLM
 
-from clearnets.autointerp.load_and_hook import load_and_hook_clearnet
+from clearnets.autointerp.load_and_hook import hook_clearnet
 
 @dataclass
 class CustomModelRunConfig:
     tokenizer_model: str = field(
         default="EleutherAI/Meta-Llama-3-8B",
         positional=True,
+    )
+    mlp_mode: str = field(
+        default="dense",
+        positional=True,
+        options=["dense", "sparse", "sparse_low_rank", "sparse_group_max"],
     )
 
 
@@ -38,13 +42,16 @@ def load_artifacts(run_cfg: RunConfig, custom_run_cfg: CustomModelRunConfig):
 
 
     tokenizer = AutoTokenizer.from_pretrained(custom_run_cfg.tokenizer_model)
+    if Path(run_cfg.model).exists():
+        model_cfg = AutoConfig.from_pretrained(Path(run_cfg.model) / "config.json")
+    else:
+        model_cfg = None
+
+    model_cfg.mlp_mode = custom_run_cfg.mlp_mode # type: ignore lol
+
     model = SparseGPTNeoXForCausalLM.from_pretrained(
         run_cfg.model,
-        device_map={"": f"cuda"},
-    )
-
-    model = LanguageModel(
-        model, 
+        config=model_cfg,
         device_map={"": "cuda"},
         quantization_config=(
             BitsAndBytesConfig(load_in_8bit=run_cfg.load_in_8bit)
@@ -53,34 +60,42 @@ def load_artifacts(run_cfg: RunConfig, custom_run_cfg: CustomModelRunConfig):
         ),
         torch_dtype=dtype,
         token=run_cfg.hf_token,
-        dispatch=True,
-        tokenizer=tokenizer
     )
 
     if run_cfg.sparse_model == "":
-        submodule_name_to_submodule, model = load_and_hook_clearnet(
+        width = 0
+        if custom_run_cfg.mlp_mode == "sparse_low_rank":
+            width = model.gpt_neox.layers[0].mlp.encoder[1].out_features
+        elif custom_run_cfg.mlp_mode == "sparse_group_max":
+            breakpoint()
+            width = model.gpt_neox.layers[0].mlp.dense_h_to_4h.out_features
+        elif custom_run_cfg.mlp_mode == "sparse":
+            width = model.gpt_neox.layers[0].mlp.dense_h_to_4h.out_features
+
+        hookpoints_to_get_sparse_acts = hook_clearnet(
             model,
             run_cfg.hookpoints,
+            width=width,
+            mlp_mode=custom_run_cfg.mlp_mode,
+            
         )
     else:
-        submodule_name_to_submodule, model = load_and_hook_sparsify_models(
+        hookpoints_to_get_sparse_acts = load_sparsify_sparse_coders(
             model,
             run_cfg.sparse_model,
             hookpoints=run_cfg.hookpoints,
+            compile=True
         )
 
-    return run_cfg.hookpoints, submodule_name_to_submodule, model, model.tokenizer
+    return hookpoints_to_get_sparse_acts, model, tokenizer
 
 
 async def test_clearnet():
     cache_cfg = CacheConfig(
         dataset_repo="EleutherAI/fineweb-edu-dedup-10b",
         dataset_split="train[:1%]",
-        dataset_row="text",
+        dataset_column="text",
         batch_size=8,
-        ctx_len=256,
-        n_splits=5,
-        n_tokens=10_000_000,
     )
     experiment_cfg = ExperimentConfig(
         train_type="quantiles",
@@ -90,7 +105,7 @@ async def test_clearnet():
     )
     overwrite = []
     # overwrite.append("cache")
-    # overwrite.append("scores")
+    overwrite.append("scores")
     
     # for model, sparse_model in [
     #     (
@@ -102,22 +117,25 @@ async def test_clearnet():
     #         "/",
     #     ),
 
+    # model="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sparse-checkpoint-164000",
 
     run_cfg = RunConfig(
-        name='clearnet-1',
+        name='clearnet-57280',
         overwrite=overwrite,
-        model="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sparse-checkpoint-164000",
+        model="/mnt/ssd-1/nora/sparse-run/HuggingFaceFW--fineweb/Sparse-FineWeb10B-28M-s=42/checkpoints/checkpoint-57280",
+        # model="/mnt/ssd-1/nora/dense-ckpts/checkpoint-118000",
+        # sparse_model="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sae_8x",
         sparse_model="",
         explainer_model="hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
-        hookpoints=["layers.3.mlp"],
+        hookpoints=["gpt_neox.layers.3"],
         explainer_model_max_len=4208,
         max_latents=100,
-        seed=22,
         num_gpus=torch.cuda.device_count(),
         filter_bos=True
     )
     custom_run_cfg = CustomModelRunConfig(
         tokenizer_model="EleutherAI/FineWeb-restricted",
+        mlp_mode="sparse_low_rank", # sparse_group_max
     )
 
     base_path = Path.cwd() / "results"
@@ -143,8 +161,12 @@ async def test_clearnet():
     feature_range = (
         torch.arange(run_cfg.max_latents) if run_cfg.max_latents else None
     )
-    hookpoints, submodule_name_to_submodule, hooked_model, tokenizer = load_artifacts(
+    hookpoints_to_get_sparse_acts, model, tokenizer = load_artifacts(
         run_cfg, custom_run_cfg
+    )
+    latent_cfg = LatentConfig(
+        min_examples=200,
+        max_examples=10_000,
     )
 
     if (
@@ -153,9 +175,10 @@ async def test_clearnet():
     ):
         populate_cache(
             run_cfg,
+            latent_cfg,
             cache_cfg,
-            hooked_model,
-            submodule_name_to_submodule,
+            model,
+            hookpoints_to_get_sparse_acts,
             latents_path,
             tokenizer,
             filter_bos=run_cfg.filter_bos,
@@ -163,12 +186,9 @@ async def test_clearnet():
     else:
         print(f"Files found in {latents_path}, skipping cache population...")
 
-    latent_cfg = LatentConfig(
-        width=list(submodule_name_to_submodule.values())[0].ae.width,
-        min_examples=200,
-        max_examples=10_000,
-    )
-    del hooked_model, submodule_name_to_submodule
+    resolved_hookpoints = list(hookpoints_to_get_sparse_acts.keys())
+    
+    del model, hookpoints_to_get_sparse_acts
 
     if (
         not glob(str(scores_path / ".*")) + glob(str(scores_path / "*"))
@@ -181,7 +201,7 @@ async def test_clearnet():
             latents_path,
             explanations_path,
             scores_path,
-            hookpoints,
+            resolved_hookpoints,
             tokenizer,
             feature_range,
         )
@@ -193,18 +213,18 @@ async def test_clearnet():
 
     scores_path =  Path("results") / run_cfg.name / "scores"
 
-    df = build_scores_df(scores_path, hookpoints, feature_range)
+    df = build_scores_df(scores_path, resolved_hookpoints, feature_range)
     
 
     for score_type in df["score_type"].unique():
         score_df = df[df['score_type'] == score_type]
-        feature_balanced_score_metrics(score_df, score_type)
+        latent_balanced_score_metrics(score_df, score_type)
 
         fig = px.histogram(
             df[df["score_type"] == score_type],
             x="accuracy",
             barmode="overlay",
-            title=f"Accuracy Distribution - {score_type}",
+            title=f"Accuracy distribution - {score_type} (run: {run_cfg.name})",
             nbins=100,
         )
         fig.write_image(visualize_path / f"autointerp_accuracies_{score_type}.pdf", format="pdf")

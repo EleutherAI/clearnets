@@ -1,19 +1,21 @@
 from functools import reduce, partial
 import torch
-from typing import List, Tuple, Dict, Any
 
-from nnsight import LanguageModel
+from typing import List, Callable
+from transformers import PreTrainedModel
 
-from delphi.autoencoders.wrapper import AutoencoderLatents
-from delphi.autoencoders.eleuther import resolve_path
+from delphi.sparse_coders.load_sparsify import resolve_path
 
-def load_and_hook_clearnet(
-    model: LanguageModel,
+def hook_clearnet(
+    model: PreTrainedModel,
     hookpoints: List[str],
-    device: str | torch.device | None = None
-) -> Tuple[Dict[str, Any], Any]:
+    width: int,
+    mlp_mode: str,
+    device: str | torch.device | None = None,
+    
+) -> dict[str, Callable]:
     """
-    Load clearnet with autoencoder-adapted hookpoints.
+    Add densifying functions to each hookpoint since the clearnet is already sparsified.
 
     Args:
         model (Any): The clearnet.
@@ -22,47 +24,34 @@ def load_and_hook_clearnet(
             If not specified the sparse models will be loaded on the same device as the base model.
 
     Returns:
-        Tuple[Dict[str, Any], Any]: A tuple containing the submodules dictionary and the edited model.
+        dict[str, Callable]: A dictionary containing densifying functions for each hookpoint.
     """
     if device is None:
         device = model.device
-
-    def to_dense(
-        top_acts: torch.Tensor, top_indices: torch.Tensor, num_latents: int, instance_dims=[0, 1]
-    ):
-        """Out-of-place scatter due to apparent NNsight bug."""
-        instance_shape = [top_acts.shape[i] for i in instance_dims]
-        dense_empty = torch.zeros(
-            *instance_shape,
+    
+    def to_dense(x, num_latents):
+        dense = torch.zeros(
+            *x['top_acts'].shape[:-1],
             num_latents,
-            device=top_acts.device,
-            dtype=top_acts.dtype,
+            device=x['top_acts'].device,
+            dtype=x['top_acts'].dtype,
             requires_grad=True,
         )
-        return dense_empty.scatter(-1, top_indices.long(), top_acts)
+        dense.scatter_(-1, x['top_indices'], x['top_acts'])
+        return dense
 
-    
-    def _forward(x, num_latents):
-        return to_dense(x['top_acts'], x['top_indices'], num_latents=num_latents)
-
-    submodules = {}
+    hookpoints_to_get_sparse_acts = {}
     for hookpoint in hookpoints:
         path_segments = resolve_path(model, hookpoint.split('.'))
         if path_segments is None:
             raise ValueError(f"Could not find valid path for hookpoint: {hookpoint}")
         
-        submodule = reduce(getattr, path_segments, model)
+        resolved_hookpoint = ".".join(path_segments)
+        # submodule = reduce(getattr, path_segments, model)
 
-        submodule.ae = AutoencoderLatents(
-            torch.nn.Identity(),
-            partial(_forward, num_latents=submodule.dense_h_to_4h.out_features),
-            width=submodule.dense_h_to_4h.out_features # type: ignore
-        )
-        submodules[hookpoint] = submodule
+        if mlp_mode == "sparse_low_rank":
+            hookpoints_to_get_sparse_acts[resolved_hookpoint] = lambda x: x
+        else:
+            hookpoints_to_get_sparse_acts[resolved_hookpoint] = partial(to_dense, num_latents=width)
 
-    # Edit base model to collect sparse model activations
-    with model.edit("") as edited:
-        for _, submodule in submodules.items():
-            submodule.ae(submodule.output)
-
-    return submodules, edited
+    return hookpoints_to_get_sparse_acts
