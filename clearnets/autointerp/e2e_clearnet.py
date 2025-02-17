@@ -40,7 +40,6 @@ def load_artifacts(run_cfg: RunConfig, custom_run_cfg: CustomModelRunConfig):
     else:
         dtype = "auto"
 
-
     tokenizer = AutoTokenizer.from_pretrained(custom_run_cfg.tokenizer_model)
     if Path(run_cfg.model).exists():
         model_cfg = AutoConfig.from_pretrained(Path(run_cfg.model) / "config.json")
@@ -89,7 +88,29 @@ def load_artifacts(run_cfg: RunConfig, custom_run_cfg: CustomModelRunConfig):
     return hookpoints_to_get_sparse_acts, model, tokenizer
 
 
+def all_configs():
+    for model, sparse_model, mlp_mode in [
+        (
+            "/mnt/ssd-1/nora/sparse-run/HuggingFaceFW--fineweb/Sparse-FineWeb10B-28M-s=42/checkpoints/checkpoint-57280",
+            "",
+            "sparse_low_rank",
+        ),
+        (
+            "/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sparse-checkpoint-164000",
+            "",
+            "sparse",
+        ),
+        ( 
+            "/mnt/ssd-1/nora/dense-ckpts/checkpoint-118000",
+            "/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sae_8x",
+            "",
+        ),
+    ]:
+        pass
+
+
 async def test_clearnet():
+
     cache_cfg = CacheConfig(
         dataset_repo="EleutherAI/fineweb-edu-dedup-10b",
         dataset_split="train[:1%]",
@@ -105,18 +126,6 @@ async def test_clearnet():
     overwrite = []
     overwrite.append("cache")
     overwrite.append("scores")
-    
-    # for model, sparse_model in [
-    #     (
-    #         "/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sparse-checkpoint-164000",
-    #         "",
-    #     ),
-    #     ( 
-    #         "/mnt/ssd-1/nora/dense-ckpts/checkpoint-118000",
-    #         "/",
-    #     ),
-
-    # model="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sparse-checkpoint-164000",
 
     run_cfg = RunConfig(
         name='clearnet-57280',
