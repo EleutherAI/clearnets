@@ -1,3 +1,4 @@
+# Keeping for archival purposes
 import json
 from pathlib import Path
 
@@ -186,6 +187,8 @@ def plot_line(df):
 
 
 if __name__ == "__main__":
+    print("Archived script, use visualization in results directory instead")
+    exit()
     path = Path("/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/results/scores/")
     
     df = build_df(path)
