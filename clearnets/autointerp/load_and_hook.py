@@ -1,4 +1,4 @@
-from functools import reduce, partial
+from functools import partial
 import torch
 
 from typing import List, Callable
@@ -55,3 +55,37 @@ def hook_clearnet(
             hookpoints_to_get_sparse_acts[resolved_hookpoint] = partial(to_dense, num_latents=width)
 
     return hookpoints_to_get_sparse_acts
+
+
+def resolve_widths(
+    model, module_names: list[str], inputs: torch.Tensor, dim = -1
+) -> dict[str, int]:
+    """Find number of output dimensions for the specified modules."""
+    module_to_name = {
+        model.get_submodule(name): name for name in module_names
+    }
+    shapes: dict[str, int] = {}
+
+    def hook(module, _, output):
+        # Unpack tuples if needed
+        if isinstance(output, tuple):
+            output, *_ = output
+
+        if isinstance(output, dict):
+            output = output['hidden_states']
+
+        name = module_to_name[module]
+
+        shapes[name] = output.shape[dim]
+
+    handles = [
+        mod.register_forward_hook(hook) for mod in module_to_name
+    ]
+    dummy = inputs.to(model.device)
+    try:
+        model._model(dummy)
+    finally:
+        for handle in handles:
+            handle.remove()
+    
+    return shapes

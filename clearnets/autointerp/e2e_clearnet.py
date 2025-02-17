@@ -104,7 +104,7 @@ async def test_clearnet():
         n_examples_test=50,
     )
     overwrite = []
-    # overwrite.append("cache")
+    overwrite.append("cache")
     overwrite.append("scores")
     
     # for model, sparse_model in [
@@ -127,11 +127,12 @@ async def test_clearnet():
         # sparse_model="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sae_8x",
         sparse_model="",
         explainer_model="hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
-        hookpoints=["gpt_neox.layers.3"],
+        hookpoints=["gpt_neox.layers.1"],
         explainer_model_max_len=4208,
         max_latents=100,
         num_gpus=torch.cuda.device_count(),
-        filter_bos=True
+        filter_bos=True,
+        zero_negatives=True
     )
     custom_run_cfg = CustomModelRunConfig(
         tokenizer_model="EleutherAI/FineWeb-restricted",
@@ -161,9 +162,11 @@ async def test_clearnet():
     feature_range = (
         torch.arange(run_cfg.max_latents) if run_cfg.max_latents else None
     )
-    hookpoints_to_get_sparse_acts, model, tokenizer = load_artifacts(
+    hookpoints_to_sparse_encode, model, tokenizer = load_artifacts(
         run_cfg, custom_run_cfg
     )
+
+    breakpoint()
     latent_cfg = LatentConfig(
         min_examples=200,
         max_examples=10_000,
@@ -175,20 +178,18 @@ async def test_clearnet():
     ):
         populate_cache(
             run_cfg,
-            latent_cfg,
             cache_cfg,
             model,
-            hookpoints_to_get_sparse_acts,
+            hookpoints_to_sparse_encode,
             latents_path,
             tokenizer,
-            filter_bos=run_cfg.filter_bos,
         )
     else:
         print(f"Files found in {latents_path}, skipping cache population...")
 
-    resolved_hookpoints = list(hookpoints_to_get_sparse_acts.keys())
+    resolved_hookpoints = list(hookpoints_to_sparse_encode.keys())
     
-    del model, hookpoints_to_get_sparse_acts
+    del model, hookpoints_to_sparse_encode
 
     if (
         not glob(str(scores_path / ".*")) + glob(str(scores_path / "*"))
