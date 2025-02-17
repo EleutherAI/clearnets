@@ -22,7 +22,7 @@ from clearnets.autointerp.load_and_hook import hook_clearnet
 @dataclass
 class CustomModelRunConfig:
     tokenizer_model: str = field(
-        default="EleutherAI/Meta-Llama-3-8B",
+        default="EleutherAI/FineWeb-restricted",
         positional=True,
     )
     mlp_mode: str = field(
@@ -67,8 +67,7 @@ def load_artifacts(run_cfg: RunConfig, custom_run_cfg: CustomModelRunConfig):
         if custom_run_cfg.mlp_mode == "sparse_low_rank":
             width = model.gpt_neox.layers[0].mlp.encoder[1].out_features
         elif custom_run_cfg.mlp_mode == "sparse_group_max":
-            breakpoint()
-            width = model.gpt_neox.layers[0].mlp.dense_h_to_4h.out_features
+            raise NotImplementedError("Sparse group max is not implemented for the clearnet")
         elif custom_run_cfg.mlp_mode == "sparse":
             width = model.gpt_neox.layers[0].mlp.dense_h_to_4h.out_features
 
@@ -136,7 +135,7 @@ async def test_clearnet():
     )
     custom_run_cfg = CustomModelRunConfig(
         tokenizer_model="EleutherAI/FineWeb-restricted",
-        mlp_mode="sparse_low_rank", # sparse_group_max
+        mlp_mode="sparse_low_rank",
     )
 
     base_path = Path.cwd() / "results"
@@ -166,7 +165,6 @@ async def test_clearnet():
         run_cfg, custom_run_cfg
     )
 
-    breakpoint()
     latent_cfg = LatentConfig(
         min_examples=200,
         max_examples=10_000,

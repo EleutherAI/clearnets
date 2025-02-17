@@ -15,7 +15,7 @@ def hook_clearnet(
     
 ) -> dict[str, Callable]:
     """
-    Add densifying functions to each hookpoint since the clearnet is already sparsified.
+    Add a densifying function for each hookpoint since the clearnet is already sparsified.
 
     Args:
         model (Any): The clearnet.
@@ -39,6 +39,7 @@ def hook_clearnet(
         )
         dense.scatter_(-1, x['top_indices'], x['top_acts'])
         return dense
+    forward = partial(to_dense, num_latents=width)
 
     hookpoints_to_get_sparse_acts = {}
     for hookpoint in hookpoints:
@@ -47,12 +48,11 @@ def hook_clearnet(
             raise ValueError(f"Could not find valid path for hookpoint: {hookpoint}")
         
         resolved_hookpoint = ".".join(path_segments)
-        # submodule = reduce(getattr, path_segments, model)
 
         if mlp_mode == "sparse_low_rank":
             hookpoints_to_get_sparse_acts[resolved_hookpoint] = lambda x: x
         else:
-            hookpoints_to_get_sparse_acts[resolved_hookpoint] = partial(to_dense, num_latents=width)
+            hookpoints_to_get_sparse_acts[resolved_hookpoint] = forward
 
     return hookpoints_to_get_sparse_acts
 
