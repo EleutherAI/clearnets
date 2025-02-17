@@ -6,7 +6,7 @@ from collections import defaultdict
 import torch
 import numpy as np
 from torch import Tensor
-from sae.sae import Sae
+from sparsify.sae import Sae
 from torch.utils.data import DataLoader
 
 from clearnets.metrics import gini, hoyer, hoyer_square, abs_entropy

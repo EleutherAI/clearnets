@@ -155,7 +155,7 @@ if __name__ == "__main__":
 
     from clearnets.train.sparse_gptneox_config import SparseGPTNeoConfig
     from clearnets.train.train_transformer import MODEL_CONFIG
-    from sae.config import SaeConfig
+    from sparsify.config import SaeConfig
 
     sparse_config = SparseGPTNeoConfig(**MODEL_CONFIG["roneneldan/TinyStories-8M"], sparse_mlp=True)
     sparse_flops_per_step = calculate_transformer_flops(sparse_config, batch_size=args.batch_size, seq_length=args.seq_len, is_sparse=True)

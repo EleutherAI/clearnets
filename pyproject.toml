@@ -10,8 +10,8 @@ requires-python = ">=3.10"
 keywords = ["interpretability", "explainable-ai"]
 license = {text = "MIT License"}
 dependencies = [
-    "sae @ https://github.com/EleutherAI/sae",
-    "sae_auto_interp @ https://github.com/EleutherAI/sae-auto-interp",
+    "delphi @ git+https://github.com/EleutherAI/delphi",
+    "sparsify @ git+https://github.com/EleutherAI/sparsify",
     "datasets",
     "torch",
     "plotly",

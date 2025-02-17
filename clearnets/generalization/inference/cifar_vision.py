@@ -10,12 +10,12 @@ import torch
 from torch import Tensor
 from transformers import AutoTokenizer, ViTConfig, ViTForImageClassification
 from torchvision import transforms
-from sae.sae import Sae
+from sparsify.sae import Sae
 import lovely_tensors as lt
 from torch.utils.data import DataLoader
 from datasets import Dataset as HfDataset
-from sae.config import SaeConfig, TrainConfig
-from sae.trainer import SaeTrainer
+from sparsify.config import SaeConfig, TrainConfig
+from sparsify.trainer import SaeTrainer
 
 from clearnets.inference.inference import get_sae_metrics
 from clearnets.plot.plot_mnist_vit import plot_mnist_vit

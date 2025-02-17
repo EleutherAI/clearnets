@@ -11,8 +11,8 @@ import torch.distributed as dist
 from datasets import Dataset, load_dataset
 from simple_parsing import field, parse
 from transformers import AutoModel, BitsAndBytesConfig, PreTrainedModel, AutoProcessor, BaseImageProcessor, PreTrainedTokenizerBase, AutoTokenizer
-from sae.data import chunk_and_tokenize, MemmapDataset
-from sae.trainer import SaeTrainer, TrainConfig
+from sparsify.data import chunk_and_tokenize, MemmapDataset
+from sparsify.trainer import SaeTrainer, TrainConfig
 
 from clearnets.train.train_transformer import LightningWrapper, MODEL_CONFIG
 from clearnets.train.sparse_gptneox import SparseGPTNeoForCausalLM

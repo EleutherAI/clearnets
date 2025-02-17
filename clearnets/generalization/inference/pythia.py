@@ -8,10 +8,10 @@ import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from nnsight import LanguageModel
-# from sae import Sae
-from sae.sae import Sae
+# from sparsify import Sae
+from sparsify.sae import Sae
 import lovely_tensors as lt
-from sae.data import MemmapDataset
+from sparsify.data import MemmapDataset
 from torch.utils.data import DataLoader
 import plotly.io as pio
 
