@@ -136,7 +136,7 @@ async def test_clearnet():
         # sparse_model="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sae_8x",
         sparse_model="",
         explainer_model="hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
-        hookpoints=["gpt_neox.layers.4.mlp"],
+        hookpoints=["gpt_neox.layers.5.mlp"],
         explainer_model_max_len=4208,
         max_latents=100,
         num_gpus=torch.cuda.device_count(),
