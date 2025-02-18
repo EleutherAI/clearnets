@@ -5,11 +5,9 @@ import os
 
 from datasets import load_dataset, DatasetDict
 from sparsify.data import chunk_and_tokenize
-from transformers import AutoTokenizer, DataCollatorForLanguageModeling, Trainer, TrainingArguments, TrainerCallback, GPTNeoXTokenizerFast
+from transformers import AutoTokenizer, DataCollatorForLanguageModeling, Trainer, TrainingArguments, TrainerCallback
 import torch
 import torch.distributed as dist
-
-from tokenizers import Tokenizer, decoders, models, normalizers, pre_tokenizers, trainers
 
 from clearnets.train.sparse_gptneox import SparseGPTNeoXForCausalLM
 from clearnets.train.sparse_gptneox_config import SparseGPTNeoXConfig

@@ -49,7 +49,7 @@ def hook_clearnet(
         
         resolved_hookpoint = ".".join(path_segments)
 
-        if mlp_mode == "sparse_low_rank":
+        if 'mlp' not in resolved_hookpoint:
             hookpoints_to_get_sparse_acts[resolved_hookpoint] = lambda x: x
         else:
             hookpoints_to_get_sparse_acts[resolved_hookpoint] = forward

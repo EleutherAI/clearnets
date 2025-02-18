@@ -43,10 +43,9 @@ def load_artifacts(run_cfg: RunConfig, custom_run_cfg: CustomModelRunConfig):
     tokenizer = AutoTokenizer.from_pretrained(custom_run_cfg.tokenizer_model)
     if Path(run_cfg.model).exists():
         model_cfg = AutoConfig.from_pretrained(Path(run_cfg.model) / "config.json")
+        model_cfg.mlp_mode = custom_run_cfg.mlp_mode # type: ignore lol
     else:
         model_cfg = None
-
-    model_cfg.mlp_mode = custom_run_cfg.mlp_mode # type: ignore lol
 
     model = SparseGPTNeoXForCausalLM.from_pretrained(
         run_cfg.model,
@@ -91,16 +90,18 @@ def load_artifacts(run_cfg: RunConfig, custom_run_cfg: CustomModelRunConfig):
 def all_configs():
     for model, sparse_model, mlp_mode in [
         (
+            # Warning: this model was produced when the config used sparse_mlp: bool rather than mlp_mode: str and it 
+            # currently doesn't load properly
             "/mnt/ssd-1/nora/sparse-run/HuggingFaceFW--fineweb/Sparse-FineWeb10B-28M-s=42/checkpoints/checkpoint-57280",
             "",
-            "sparse_low_rank",
+            "sparse",
         ),
         (
             "/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sparse-checkpoint-164000",
             "",
             "sparse",
         ),
-        ( 
+        (
             "/mnt/ssd-1/nora/dense-ckpts/checkpoint-118000",
             "/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sae_8x",
             "",
@@ -128,23 +129,22 @@ async def test_clearnet():
     overwrite.append("scores")
 
     run_cfg = RunConfig(
-        name='clearnet-57280',
+        name='clearnet-164000',
         overwrite=overwrite,
-        model="/mnt/ssd-1/nora/sparse-run/HuggingFaceFW--fineweb/Sparse-FineWeb10B-28M-s=42/checkpoints/checkpoint-57280",
+        model="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sparse-checkpoint-164000",
         # model="/mnt/ssd-1/nora/dense-ckpts/checkpoint-118000",
         # sparse_model="/mnt/ssd-1/caleb/clearnets/Dense-FineWebEduDedup-58M-s=42/sae_8x",
         sparse_model="",
         explainer_model="hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4",
-        hookpoints=["gpt_neox.layers.1"],
+        hookpoints=["gpt_neox.layers.4.mlp"],
         explainer_model_max_len=4208,
         max_latents=100,
         num_gpus=torch.cuda.device_count(),
         filter_bos=True,
-        zero_negatives=True
     )
     custom_run_cfg = CustomModelRunConfig(
         tokenizer_model="EleutherAI/FineWeb-restricted",
-        mlp_mode="sparse_low_rank",
+        mlp_mode="sparse",
     )
 
     base_path = Path.cwd() / "results"
@@ -186,6 +186,7 @@ async def test_clearnet():
         populate_cache(
             run_cfg,
             cache_cfg,
+            experiment_cfg,
             model,
             hookpoints_to_sparse_encode,
             latents_path,

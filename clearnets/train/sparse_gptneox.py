@@ -54,7 +54,7 @@ from transformers.models.gpt_neox.modeling_gpt_neox import (
 )
 
 from sparsify.utils import decoder_impl
-from clearnets.train.xformer_embeddingbag import xformers_embedding_bag
+from clearnets.train.xformers import xformers_embedding_bag
 
 logger = logging.get_logger(__name__)
 
@@ -668,4 +668,5 @@ class SparseGPTNeoXForCausalLM(SparseGPTNeoXPreTrainedModel, GenerationMixin):
                 tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past[:2])
                 + layer_past[2:],
             )
-        return reordered_past
+        return 
+  
